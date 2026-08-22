@@ -97,6 +97,14 @@ schedule and why.
   in the config and restart (`--resume` picks up from the last checkpoint
   instead of starting over).
 
+**A very high val mAP here is not proof the detector is good** — train and
+val labels both came from the same SAM3 pass, so this metric measures how
+well RTMDet reproduced SAM3's boxes, including any systematic labeling
+mistakes SAM3 made (e.g. the floor bag-pile / laundry confusion from
+earlier testing). Treat it as a training-convergence signal, not a
+real-world accuracy number — `notebooks/01_inspect_predictions.ipynb`
+(step 5 below) is the actual check.
+
 ## 4. Validate the trained detector
 
 ```bash
@@ -113,3 +121,16 @@ signal for missed-detection gaps before we design the tracking/counting
 layer on top). This does **not** do cross-frame tracking or deduplicated
 belt counting — that algorithm is still an open decision (see
 `../app/tracker.py`); this script only validates the detector in isolation.
+
+## 5. Eyeball predictions on frames the model never saw
+
+```bash
+uv sync   # picks up jupyter/matplotlib, added for this notebook
+uv run python -m ipykernel install --user --name bag-counting-training --display-name "bag-counting-training"
+```
+
+Open `notebooks/01_inspect_predictions.ipynb`, kernel `bag-counting-training`.
+Samples frames offset from the labeling `--stride` grid (so none of them were
+in train or val), runs the trained checkpoint on them, and draws the boxes —
+this is the actual check for whether the detector generalizes, versus just
+agreeing with SAM3's own labels (see the mAP caveat in step 3).
