@@ -1,8 +1,7 @@
 """Video processing pipeline: detect, track/count, annotate, write output.
 
 Runs synchronously on a worker thread (see main.py) so it never blocks the
-event loop. Detector/counter/anomaly logic are stubs for now — see their
-modules for what's still to be decided.
+event loop.
 """
 import logging
 from pathlib import Path
@@ -10,7 +9,7 @@ from pathlib import Path
 import cv2
 
 from app.anomalies import AnomalyMonitor
-from app.detector import BagDetector, StubDetector
+from app.detector import BagDetector, get_detector
 from app.jobs import job_store
 from app.models import JobStatus
 from app.tracker import BagCounter
@@ -21,7 +20,7 @@ PROGRESS_UPDATE_EVERY_N_FRAMES = 30
 
 
 def run(job_id: str, input_path: Path, output_path: Path, detector: BagDetector | None = None) -> None:
-    detector = detector or StubDetector()
+    detector = detector or get_detector()
     counter = BagCounter()
     monitor = AnomalyMonitor()
 
@@ -33,6 +32,7 @@ def run(job_id: str, input_path: Path, output_path: Path, detector: BagDetector 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+    counter.set_frame_size(width, height)
 
     writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
@@ -47,7 +47,7 @@ def run(job_id: str, input_path: Path, output_path: Path, detector: BagDetector 
             detections = detector.detect(frame)
             counter.update(detections, frame_idx)
             anomalies.extend(monitor.check(detections, frame_idx, fps))
-            _draw_overlay(frame, detections, counter.total)
+            _draw_overlay(frame, detections, counter.total, counter.zone)
             writer.write(frame)
 
             frame_idx += 1
@@ -70,7 +70,11 @@ def run(job_id: str, input_path: Path, output_path: Path, detector: BagDetector 
     )
 
 
-def _draw_overlay(frame, detections, bag_count: int) -> None:
+def _draw_overlay(frame, detections, bag_count: int, zone: tuple[float, float, float, float] | None) -> None:
+    if zone is not None:
+        zx1, zy1, zx2, zy2 = (int(v) for v in zone)
+        cv2.rectangle(frame, (zx1, zy1), (zx2, zy2), (255, 200, 0), 1)
+
     for det in detections:
         x1, y1, x2, y2 = (int(v) for v in det.bbox)
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 0), 2)

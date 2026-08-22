@@ -5,5 +5,16 @@ services:
       - "8000:8000"
     volumes:
       - ./storage:/data
+      - ./models:/models
     environment:
       - DATA_DIR=/data
+      - DETECTOR_CONFIG_PATH=/models/rtmdet_bag.py
+      - DETECTOR_CHECKPOINT_PATH=/models/checkpoint.pth
+      - DETECTOR_DEVICE=cuda:0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

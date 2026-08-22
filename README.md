@@ -5,10 +5,13 @@ uploaded video.
 
 ## Status
 
-This is the base scaffold: the HTTP API, async job pipeline, video
-read/write, and overlay rendering all work end-to-end. Detection, tracking,
-and anomaly logic are stub extension points, not yet implemented — see
-"What's still to decide" below.
+HTTP API, async job pipeline, video read/write, and overlay rendering all
+work end-to-end. Detection (RTMDet via MMDetection) and tracking/counting
+(IoU tracker + counting-zone crossing) are implemented — see "Detector
+setup" below to enable real detections; without a configured checkpoint the
+service still runs, using a no-op stub that always reports 0 bags.
+Anomaly monitoring (`app/anomalies.py`) is still a stub — see "What's still
+to decide".
 
 ## Run
 
@@ -19,6 +22,20 @@ docker compose up --build
 API available at `http://localhost:8000` (docs at `/docs`). Uploaded and
 processed videos persist in `./storage/{input,output}` on the host, so they
 survive container recreation.
+
+**GPU required for real detections.** `docker-compose.yml` requests a GPU
+reservation (needs `nvidia-container-toolkit` on the host) and the image
+installs a CUDA build of torch/MMDetection — see "Detector setup" below.
+Without `./models/rtmdet_bag.py` + `./models/checkpoint.pth` present, the
+app still starts and runs fine, just with the stub detector (0 bags always).
+
+**Note on the Docker image itself**: the GPU/MMDetection install steps in
+the `Dockerfile` reuse the exact sequence already validated working in
+`training/` (see its README for why each step exists — pkg_resources vs.
+setuptools 81+, the opencv-python/opencv-python-headless conflict, the
+torch/numpy ABI mismatch), but the full image build has only been verified
+on a GPU host, not in this project's own CPU-only dev environment. Report
+back if `docker compose up --build` hits something the training env didn't.
 
 ## API
 
@@ -34,38 +51,56 @@ app/
   main.py        FastAPI routes
   jobs.py         in-memory job store (thread-safe)
   processing.py   per-video pipeline: read -> detect -> track/count -> overlay -> write
-  detector.py     BagDetector interface (StubDetector placeholder for MMDetection)
-  tracker.py      BagCounter interface (cross-frame tracking + counting)
-  anomalies.py    AnomalyMonitor interface
+  detector.py     RTMDetDetector (mmdet inference) + StubDetector fallback
+  tracker.py      BagCounter: greedy IoU tracker + counting-zone crossing
+  anomalies.py    AnomalyMonitor interface (still a stub)
   models.py       Job/Anomaly schemas
-  config.py       storage paths
+  config.py       storage paths, detector config/checkpoint paths
 ```
 
 Processing runs on a worker thread via `asyncio.to_thread`, so the HTTP
 request that starts a job returns immediately and inference never blocks
 the event loop.
 
-## Building the detector
+## Counting approach
 
-The `app/detector.py` stub is filled in by a separate offline pipeline —
-labeling and training run on a GPU host, not inside this service:
+`app/tracker.py`'s `BagCounter`:
 
-```
-experiments/   SAM 3 prototyping (uv env) — notebook + scripts/label_with_sam3.py
-                bootstrap-labels a COCO dataset from input.mp4
-training/      MMDetection (uv env) — configs/rtmdet_bag.py fine-tunes
-                RTMDet-tiny on that dataset; scripts/train.py, scripts/infer.py
-```
+- **Detection → tracking**: greedy IoU matching between frames, with simple
+  constant-velocity prediction (advance each unmatched track by its last
+  known velocity every frame it's missed). Without prediction, a track that
+  goes unseen for even a few frames (brief occlusion, a confidence dip)
+  sits frozen at its last position while the real bag keeps moving — by the
+  time detection resumes it's out of IoU range, looks like a new object,
+  and gets double-counted. Prediction keeps the track near the bag's actual
+  position through short gaps instead.
+- **Counting**: a rectangular zone (not a single line) placed over a clean
+  stretch of the belt — past the tunnel opening, before the pile at the
+  bottom-left. Each track is counted at most once, the first time its
+  centroid enters the zone, keyed by track ID — that's what prevents
+  double-counting the same bag across multiple frames.
+- The zone's default position (`DEFAULT_ZONE_FRACTIONAL` in `tracker.py`)
+  is tuned to `input.mp4`'s fixed camera angle; re-tune for a different
+  camera setup.
 
-See `experiments/README.md` and `training/README.md` for the full
-labeling → training → inference walkthrough.
+## Detector setup
+
+1. Train a checkpoint via `training/` (see its README): label with SAM 3,
+   fine-tune RTMDet, validate with `training/notebooks/01_inspect_predictions.ipynb`.
+2. Copy the config and checkpoint into `./models/`:
+   ```bash
+   cp training/configs/rtmdet_bag.py models/rtmdet_bag.py
+   cp training/work_dirs/rtmdet_bag/best_coco_bbox_mAP_epoch_*.pth models/checkpoint.pth
+   ```
+3. `docker compose up --build` — `DETECTOR_CONFIG_PATH`/`DETECTOR_CHECKPOINT_PATH`
+   in `docker-compose.yml` already point at those paths inside the container.
+
+The detector loads lazily (on the first `/process` call, not at startup),
+so a missing/misconfigured checkpoint fails that job with a clear error
+rather than crashing the app.
 
 ## What's still to decide
 
-- Wiring the trained RTMDet checkpoint into `app/detector.py` — needs the
-  app's Docker image to gain GPU/CUDA inference support, which isn't
-  designed yet.
-- Tracking + counting-line algorithm and duplicate-count protection (`app/tracker.py`).
 - Anomaly definitions and detection method (`app/anomalies.py`).
 - Job persistence beyond in-memory (only matters if job history must survive a restart — video files already persist via the volume).
 
