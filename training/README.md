@@ -159,9 +159,16 @@ agreeing with SAM3's own labels (see the mAP caveat in step 3).
 ## 6. Deploy the checkpoint to the app
 
 ```bash
-cp configs/rtmdet_bag.py ../models/rtmdet_bag.py
-cp work_dirs/rtmdet_bag/best_coco_bbox_mAP_epoch_*.pth ../models/checkpoint.pth
+./scripts/deploy_checkpoint.sh
+git push
 ```
 
-See the root `README.md`'s "Detector setup" section for how the running
-service picks these up.
+Copies the best checkpoint (picked by modification time, not just the
+first glob match) and its config into `../models/`, and commits them if
+anything changed — a no-op if you run it again with nothing new to
+deploy. Doesn't push on its own; review the commit, then push yourself.
+This step is what makes `docker compose up --build` produce real
+detections instead of the stub 0-bags fallback — a repo without this
+step run gives the app no checkpoint to load. See the root `README.md`'s
+"Detection: MMDetection / RTMDet" section for how the running service
+picks these files up.
