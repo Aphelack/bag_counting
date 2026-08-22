@@ -1,0 +1,13 @@
+[project]
+name = "bag-counting-training"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "torch>=2.1",
+    "torchvision>=0.16",
+    "openmim>=0.3.9",
+    "opencv-python-headless>=4.9",
+    "numpy>=1.26,<2.0",
+]

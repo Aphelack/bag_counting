@@ -16,7 +16,18 @@ uv run python -m ipykernel install --user --name bag-counting-experiments --disp
 
 ## Notebooks
 
-- `01_sam3_segmentation_test.ipynb` — тест SAM 3 (text-prompt сегментация) на кадрах из
-  `../storage/input/input.mp4` как bootstrap-разметка под дообучение RTMDet. Требует
-  одобренный доступ к `facebook/sam3` на HuggingFace (`HF_TOKEN`) и CUDA GPU — see markdown
-  cells in the notebook. Frame-sampling/visualization cells работают без GPU.
+- `01_sam3_segmentation_test.ipynb` — интерактивный тест SAM 3 (text-prompt сегментация,
+  `facebookresearch/sam3` native API) на кадрах из `../storage/input/input.mp4`. Требует
+  CUDA GPU, пакет `sam3` (`uv pip install git+https://github.com/facebookresearch/sam3.git`)
+  и локально скачанный checkpoint + BPE vocab — see cells in the notebook. Сэмплирование
+  кадров/визуализация работают без GPU.
+
+  ⚠️ На момент последнего обновления в ноутбуке был захардкожен HF-токен в открытом виде —
+  если репозиторий публикуется на GitHub, токен нужно отозвать на
+  huggingface.co/settings/tokens и заменить на чтение из переменной окружения.
+
+## Scripts
+
+- `scripts/label_with_sam3.py` — та же SAM3-логика, что и в ноутбуке, но прогоняется по
+  всему видео (не по горстке кадров) и сразу пишет COCO-датасет для `../training/`. См.
+  `../training/README.md` за полным пайплайном разметка → обучение → инференс.

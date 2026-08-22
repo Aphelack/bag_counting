@@ -45,9 +45,26 @@ Processing runs on a worker thread via `asyncio.to_thread`, so the HTTP
 request that starts a job returns immediately and inference never blocks
 the event loop.
 
+## Building the detector
+
+The `app/detector.py` stub is filled in by a separate offline pipeline —
+labeling and training run on a GPU host, not inside this service:
+
+```
+experiments/   SAM 3 prototyping (uv env) — notebook + scripts/label_with_sam3.py
+                bootstrap-labels a COCO dataset from input.mp4
+training/      MMDetection (uv env) — configs/rtmdet_bag.py fine-tunes
+                RTMDet-tiny on that dataset; scripts/train.py, scripts/infer.py
+```
+
+See `experiments/README.md` and `training/README.md` for the full
+labeling → training → inference walkthrough.
+
 ## What's still to decide
 
-- MMDetection model/checkpoint for bag detection (`app/detector.py`).
+- Wiring the trained RTMDet checkpoint into `app/detector.py` — needs the
+  app's Docker image to gain GPU/CUDA inference support, which isn't
+  designed yet.
 - Tracking + counting-line algorithm and duplicate-count protection (`app/tracker.py`).
 - Anomaly definitions and detection method (`app/anomalies.py`).
 - Job persistence beyond in-memory (only matters if job history must survive a restart — video files already persist via the volume).
