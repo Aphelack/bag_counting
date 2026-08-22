@@ -37,6 +37,14 @@ torch/numpy ABI mismatch), but the full image build has only been verified
 on a GPU host, not in this project's own CPU-only dev environment. Report
 back if `docker compose up --build` hits something the training env didn't.
 
+## Web UI
+
+`http://localhost:8000/` — a single-page UI (plain HTML/CSS/JS, no build
+step, no external assets) covering upload, start-processing, live status
+polling, bag count, anomalies, and download. Recent jobs are kept in the
+browser's `localStorage` so you can reopen one after a page refresh. Source
+in `app/static/index.html`, served via `StaticFiles`.
+
 ## API
 
 - `POST /videos` — multipart upload (`file`), returns a job with `pending` status.
@@ -79,6 +87,18 @@ the event loop.
   bottom-left. Each track is counted at most once, the first time its
   centroid enters the zone, keyed by track ID — that's what prevents
   double-counting the same bag across multiple frames.
+- **Direction-aware counting**: handles bags that get jostled backwards
+  and then forward again on the belt. A sudden reversal is exactly what
+  the constant-velocity predictor above gets wrong, so tracking can
+  legitimately break mid-reversal and the same physical bag ends up as
+  several separate tracks. Rather than trying to perfectly stitch that
+  back together, each zone-crossing is signed by its direction relative to
+  a reference direction (set from the very first crossing — the belt's
+  actual forward direction isn't known in advance): +1 with the flow, -1
+  against it. A bag that crosses forward/back/forward nets
+  `1 + (-1) + 1 = 1`, matching the one bag that actually passed, instead of
+  counting it 3 times. `BagCounter.forward_count`/`.reverse_count` expose
+  the raw tallies if you want to see how often this is kicking in.
 - The zone's default position (`DEFAULT_ZONE_FRACTIONAL` in `tracker.py`)
   is tuned to `input.mp4`'s fixed camera angle; re-tune for a different
   camera setup.

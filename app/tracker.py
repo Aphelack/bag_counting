@@ -18,6 +18,19 @@ unmatched track's box by its last known velocity every frame keeps it near
 where the bag actually is, so matching survives short gaps instead of
 silently double-counting.
 
+Direction-aware counting handles a case prediction alone doesn't: an
+object that briefly reverses on the belt (jostled backwards, then forward
+again) and *does* break tracking mid-reversal — a sudden direction change
+is exactly what a constant-velocity predictor gets wrong, so a new track
+can legitimately spawn there. Rather than trying to perfectly stitch that
+reversal into one track, each zone-crossing is signed by its direction
+relative to a reference direction (established from the very first
+crossing, majority-vote in spirit — the line's actual forward direction
+isn't known in advance, so the first real crossing defines it): +1 with
+the flow, -1 against it. A bag that goes forward/back/forward across three
+broken track segments nets 1 + (-1) + 1 = 1, matching the one physical bag
+that actually crossed, instead of 3.
+
 The default zone is tuned to this project's fixed camera angle
 (storage/input/input.mp4: a diagonal conveyor belt running from the
 upper-middle of the frame to the lower-left) — pass a different
@@ -67,6 +80,10 @@ def in_zone(point: tuple[float, float], zone: Bbox) -> bool:
     return zx1 <= x <= zx2 and zy1 <= y <= zy2
 
 
+def dot(a: Vector, b: Vector) -> float:
+    return a[0] * b[0] + a[1] * b[1]
+
+
 @dataclass
 class Track:
     id: int
@@ -84,12 +101,17 @@ class BagCounter:
         max_age: int = 10,
     ) -> None:
         self.total = 0
+        self.forward_count = 0
+        self.reverse_count = 0
         self._tracks: dict[int, Track] = {}
         self._next_id = 1
         self._iou_threshold = iou_threshold
         self._max_age = max_age
         self._zone_fractional = zone_fractional
         self._zone: Bbox | None = None
+        # Set from the first zone-crossing's velocity — that crossing
+        # defines "forward" for every crossing after it.
+        self._reference_direction: Vector | None = None
 
     def set_frame_size(self, width: int, height: int) -> None:
         x1, y1, x2, y2 = self._zone_fractional
@@ -150,8 +172,23 @@ class BagCounter:
                 self._next_id += 1
 
         for track in self._tracks.values():
-            if not track.counted and in_zone(centroid(track.bbox), self._zone):
-                track.counted = True
+            if track.counted or not in_zone(centroid(track.bbox), self._zone):
+                continue
+            if track.velocity == (0.0, 0.0):
+                # No direction signal yet (just spawned this frame) — wait
+                # for the next matched update rather than guess.
+                continue
+
+            track.counted = True
+            if self._reference_direction is None:
+                self._reference_direction = track.velocity
                 self.total += 1
+                self.forward_count += 1
+            elif dot(track.velocity, self._reference_direction) >= 0:
+                self.total += 1
+                self.forward_count += 1
+            else:
+                self.total -= 1
+                self.reverse_count += 1
 
         return self.total

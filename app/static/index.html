@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Подсчёт мешков на конвейере</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    max-width: 720px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    color: #1a1a1a;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 1.5rem; }
+  h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
+  section {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  button {
+    font-size: 0.95rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid #333;
+    border-radius: 6px;
+    background: #1a1a1a;
+    color: white;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary { background: white; color: #1a1a1a; }
+  input[type="file"] { display: block; margin-bottom: 0.75rem; }
+  .row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+  .field { margin: 0.4rem 0; }
+  .field .label { color: #666; font-size: 0.85rem; }
+  .field .value { font-weight: 600; }
+  progress { width: 100%; height: 10px; }
+  .status-pending, .status-processing { color: #a06a00; }
+  .status-completed { color: #146c2e; }
+  .status-failed { color: #b3261e; }
+  .error-box {
+    background: #fdecea;
+    color: #b3261e;
+    border: 1px solid #f3c4c0;
+    border-radius: 6px;
+    padding: 0.6rem 0.8rem;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+  }
+  ul.anomalies, ul.recent-jobs { margin: 0; padding-left: 1.1rem; }
+  ul.anomalies li { font-size: 0.9rem; }
+  ul.recent-jobs { list-style: none; padding: 0; }
+  ul.recent-jobs li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+  }
+  ul.recent-jobs li:last-child { border-bottom: none; }
+  ul.recent-jobs button { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
+  .muted { color: #888; font-size: 0.9rem; }
+  code { background: #f2f2f2; padding: 0.1rem 0.3rem; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Подсчёт мешков на конвейере</h1>
+
+<section id="upload-section">
+  <h2>Загрузка видео</h2>
+  <input type="file" id="file-input" accept="video/*">
+  <button id="upload-btn">Загрузить</button>
+  <div id="upload-error" class="error-box" hidden></div>
+</section>
+
+<section id="job-section" hidden>
+  <h2>Текущее задание</h2>
+  <div class="field"><span class="label">ID: </span><code id="job-id"></code></div>
+  <div class="field"><span class="label">Файл: </span><span id="job-filename" class="value"></span></div>
+  <div class="field"><span class="label">Статус: </span><span id="job-status" class="value"></span></div>
+
+  <div class="row" style="margin: 0.75rem 0;">
+    <button id="process-btn">Начать обработку</button>
+  </div>
+
+  <div id="progress-wrap" hidden>
+    <progress id="progress-bar" max="1" value="0"></progress>
+    <span id="progress-text" class="muted"></span>
+  </div>
+
+  <div class="field"><span class="label">Мешков посчитано: </span><span id="bag-count" class="value">0</span></div>
+
+  <div id="anomalies-wrap" hidden>
+    <div class="label">Аномалии:</div>
+    <ul id="anomalies-list" class="anomalies"></ul>
+  </div>
+
+  <div id="job-error" class="error-box" hidden></div>
+
+  <div class="row" style="margin-top: 0.75rem;">
+    <a id="download-link" href="#" hidden><button>Скачать результат</button></a>
+  </div>
+</section>
+
+<section>
+  <h2>Недавние задания</h2>
+  <ul id="recent-jobs" class="recent-jobs"></ul>
+  <p id="no-recent-jobs" class="muted">Пока нет загруженных видео.</p>
+</section>
+
+<script>
+const API = "";
+const RECENT_JOBS_KEY = "bagCountingRecentJobs";
+const MAX_RECENT_JOBS = 10;
+const POLL_INTERVAL_MS = 2000;
+
+let currentJobId = null;
+let pollTimer = null;
+
+const el = (id) => document.getElementById(id);
+
+function loadRecentJobs() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_JOBS_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentJob(job) {
+  const jobs = loadRecentJobs().filter((j) => j.id !== job.id);
+  jobs.unshift({ id: job.id, filename: job.filename, status: job.status });
+  localStorage.setItem(RECENT_JOBS_KEY, JSON.stringify(jobs.slice(0, MAX_RECENT_JOBS)));
+  renderRecentJobs();
+}
+
+function renderRecentJobs() {
+  const jobs = loadRecentJobs();
+  const list = el("recent-jobs");
+  list.innerHTML = "";
+  el("no-recent-jobs").hidden = jobs.length > 0;
+
+  for (const job of jobs) {
+    const li = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = `${job.filename} — ${job.status}`;
+    const btn = document.createElement("button");
+    btn.className = "secondary";
+    btn.textContent = "Открыть";
+    btn.onclick = () => openJob(job.id);
+    li.append(label, btn);
+    list.append(li);
+  }
+}
+
+async function apiFetch(path, options) {
+  const resp = await fetch(API + path, options);
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = await resp.json();
+      detail = body.detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return resp.json();
+}
+
+async function uploadVideo() {
+  const input = el("file-input");
+  const errorBox = el("upload-error");
+  errorBox.hidden = true;
+
+  if (!input.files.length) {
+    errorBox.textContent = "Выберите файл видео.";
+    errorBox.hidden = false;
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", input.files[0]);
+
+  el("upload-btn").disabled = true;
+  try {
+    const job = await apiFetch("/videos", { method: "POST", body: formData });
+    saveRecentJob(job);
+    showJob(job);
+  } catch (err) {
+    errorBox.textContent = "Ошибка загрузки: " + err.message;
+    errorBox.hidden = false;
+  } finally {
+    el("upload-btn").disabled = false;
+  }
+}
+
+async function startProcessing() {
+  el("process-btn").disabled = true;
+  try {
+    const job = await apiFetch(`/videos/${currentJobId}/process`, { method: "POST" });
+    renderJob(job);
+    startPolling();
+  } catch (err) {
+    el("job-error").textContent = "Ошибка запуска обработки: " + err.message;
+    el("job-error").hidden = false;
+    el("process-btn").disabled = false;
+  }
+}
+
+function openJob(jobId) {
+  stopPolling();
+  currentJobId = jobId;
+  apiFetch(`/videos/${jobId}/status`)
+    .then((job) => {
+      showJob(job);
+      if (job.status === "pending" || job.status === "processing") {
+        startPolling();
+      }
+    })
+    .catch((err) => {
+      el("job-error").textContent = "Не удалось получить статус: " + err.message;
+      el("job-error").hidden = false;
+    });
+}
+
+function showJob(job) {
+  currentJobId = job.id;
+  el("job-section").hidden = false;
+  renderJob(job);
+}
+
+function renderJob(job) {
+  el("job-id").textContent = job.id;
+  el("job-filename").textContent = job.filename;
+
+  const statusEl = el("job-status");
+  statusEl.textContent = job.status;
+  statusEl.className = "value status-" + job.status;
+
+  el("bag-count").textContent = job.bag_count;
+
+  const processBtn = el("process-btn");
+  processBtn.disabled = job.status !== "pending";
+  processBtn.textContent = job.status === "pending" ? "Начать обработку" : "Обработка запущена";
+
+  const progressWrap = el("progress-wrap");
+  if (job.status === "processing") {
+    progressWrap.hidden = false;
+    el("progress-bar").value = job.progress;
+    el("progress-text").textContent = Math.round(job.progress * 100) + "%";
+  } else {
+    progressWrap.hidden = true;
+  }
+
+  const anomaliesWrap = el("anomalies-wrap");
+  if (job.anomalies && job.anomalies.length > 0) {
+    anomaliesWrap.hidden = false;
+    const list = el("anomalies-list");
+    list.innerHTML = "";
+    for (const a of job.anomalies) {
+      const li = document.createElement("li");
+      li.textContent = `[${a.timestamp_sec.toFixed(1)}s, кадр ${a.frame}] ${a.kind}: ${a.message}`;
+      list.append(li);
+    }
+  } else {
+    anomaliesWrap.hidden = true;
+  }
+
+  const errorBox = el("job-error");
+  if (job.status === "failed" && job.error) {
+    errorBox.textContent = job.error;
+    errorBox.hidden = false;
+  } else {
+    errorBox.hidden = true;
+  }
+
+  const downloadLink = el("download-link");
+  if (job.status === "completed") {
+    downloadLink.href = `/videos/${job.id}/download`;
+    downloadLink.hidden = false;
+  } else {
+    downloadLink.hidden = true;
+  }
+
+  saveRecentJob(job);
+}
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(async () => {
+    try {
+      const job = await apiFetch(`/videos/${currentJobId}/status`);
+      renderJob(job);
+      if (job.status === "completed" || job.status === "failed") {
+        stopPolling();
+      }
+    } catch (err) {
+      stopPolling();
+      el("job-error").textContent = "Не удалось получить статус: " + err.message;
+      el("job-error").hidden = false;
+    }
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+el("upload-btn").addEventListener("click", uploadVideo);
+el("process-btn").addEventListener("click", startProcessing);
+
+renderRecentJobs();
+</script>
+
+</body>
+</html>

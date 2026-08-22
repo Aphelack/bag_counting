@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app import processing
 from app.config import settings
@@ -66,3 +67,9 @@ async def download_result(job_id: str) -> FileResponse:
     if job.status != JobStatus.COMPLETED or job.output_path is None:
         raise HTTPException(409, f"job not completed (status={job.status})")
     return FileResponse(job.output_path, media_type="video/mp4", filename=f"{job_id}.mp4")
+
+
+# Mounted last so it can't shadow the API routes above — Starlette matches
+# routes in registration order, and a mount at "/" would otherwise catch
+# everything.
+app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
