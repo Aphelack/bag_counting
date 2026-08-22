@@ -12,7 +12,9 @@ dependencies = [
     # declare it as a dependency — uv venvs don't bundle setuptools by
     # default the way classic `venv` does, so `mim` fails with
     # "ModuleNotFoundError: No module named 'pkg_resources'" without this.
-    "setuptools",
+    # Also pinned <81: setuptools removed pkg_resources entirely in 81/82
+    # (Feb 2026), which breaks the same import even with setuptools present.
+    "setuptools<81",
     "opencv-python-headless>=4.9",
     "numpy>=1.26,<2.0",
 ]
