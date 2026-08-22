@@ -45,11 +45,26 @@ test_evaluator = val_evaluator
 # Bootstrap-labeled dataset is small (single class, single camera angle) —
 # far fewer epochs than the 300-epoch COCO-from-scratch schedule, starting
 # from COCO-pretrained weights instead of training from scratch.
+#
+# stage2_num_epochs mirrors the base config's mosaic/mixup "cooldown" —
+# RTMDet trains with heavy Mosaic/MixUp augmentation for most of the
+# schedule, then switches to a lighter pipeline (train_pipeline_stage2,
+# inherited from the base config) for the last stretch to let the model
+# settle. The base config turns this off for its last 20/300 (~7%) epochs;
+# we use a larger fraction here since fine-tuning on a small dataset
+# benefits from more stabilization time relative to the total run.
 max_epochs = 50
-train_cfg = dict(max_epochs=max_epochs, val_interval=5)
+stage2_num_epochs = 10
+interval = 5
+
+train_cfg = dict(
+    max_epochs=max_epochs,
+    val_interval=interval,
+    dynamic_intervals=[(max_epochs - stage2_num_epochs, 1)],
+)
 
 param_scheduler = [
-    dict(type="LinearLR", start_factor=1e-5, by_epoch=False, begin=0, end=100),
+    dict(type="LinearLR", start_factor=1e-5, by_epoch=False, begin=0, end=200),
     dict(
         type="CosineAnnealingLR",
         eta_min=0.0002,
@@ -61,8 +76,22 @@ param_scheduler = [
     ),
 ]
 
-# Smaller LR than the base config's 8-GPU x batch-32 schedule, since we're
-# fine-tuning on one GPU with a much smaller batch size.
+custom_hooks = [
+    dict(type="EMAHook", ema_type="ExpMomentumEMA", momentum=0.0002, update_buffers=True, priority=49),
+    dict(
+        type="PipelineSwitchHook",
+        switch_epoch=max_epochs - stage2_num_epochs,
+        switch_pipeline={{_base_.train_pipeline_stage2}},  # noqa: F821 (MMEngine base-config reference syntax)
+    ),
+]
+
+# Lower than the base config's 0.004 — that schedule assumes 8 GPUs x batch
+# 32 (effective batch 256); linear LR scaling for our batch_size=8 on one
+# GPU would suggest ~0.004 * 8/256 = 0.000125, but that's overly
+# conservative for fine-tuning from a pretrained checkpoint on a small
+# dataset, so this is a manually-picked starting point rather than a strict
+# linear-scaling result. Watch the loss curve (see training/README.md) and
+# adjust if it's noisy (too high) or barely moving (too low).
 optim_wrapper = dict(optimizer=dict(lr=0.0004))
 
 load_from = (
@@ -71,6 +100,6 @@ load_from = (
 )
 
 default_hooks = dict(
-    checkpoint=dict(type="CheckpointHook", interval=5, max_keep_ckpts=3, save_best="auto"),
+    checkpoint=dict(type="CheckpointHook", interval=interval, max_keep_ckpts=3, save_best="auto"),
     logger=dict(type="LoggerHook", interval=20),
 )

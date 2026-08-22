@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from mmdet.utils import register_all_modules
 from mmengine.config import Config
@@ -27,8 +28,13 @@ def main() -> None:
 
     register_all_modules()
     cfg = Config.fromfile(args.config)
+
     if args.work_dir:
         cfg.work_dir = args.work_dir
+    elif cfg.get("work_dir", None) is None:
+        # rtmdet_bag.py doesn't set one, matching mmdetection's own
+        # tools/train.py fallback: ./work_dirs/<config file stem>
+        cfg.work_dir = str(Path("work_dirs") / Path(args.config).stem)
     cfg.resume = args.resume
 
     runner = Runner.from_cfg(cfg)

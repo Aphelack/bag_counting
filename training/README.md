@@ -64,6 +64,24 @@ LR) if the labeled dataset ends up much bigger/smaller than expected —
 comments in the config explain what was tuned down from the base 8-GPU
 schedule and why.
 
+**Controlling training quality, while it runs or after:**
+
+- Every `val_interval` epochs (5, by default) the console prints
+  `coco/bbox_mAP`, `coco/bbox_mAP_50`, etc. on the held-out val split — that's
+  the main signal to watch.
+- Full logs land in `work_dirs/rtmdet_bag/<timestamp>/` — `*.log` has the
+  human-readable text log (loss per iteration, LR, ETA); `vis_data/scalars.json`
+  has the same as newline-delimited JSON if you want to plot loss/mAP curves.
+- `default_hooks.checkpoint` uses `save_best='auto'`, so
+  `work_dirs/rtmdet_bag/best_coco_bbox_mAP_epoch_*.pth` is the checkpoint to
+  use in step 4 — not necessarily the last epoch's.
+- If mAP stays near-zero past epoch ~15-20: that's usually a labeling
+  problem, not a training one — go back to step 2's `previews/` and check
+  recall/false-positive rate before touching hyperparameters.
+- If the loss curve is noisy or diverges: lower `optim_wrapper.optimizer.lr`
+  in the config and restart (`--resume` picks up from the last checkpoint
+  instead of starting over).
+
 ## 4. Validate the trained detector
 
 ```bash
