@@ -15,6 +15,11 @@ from app.models import Job, JobStatus
 app = FastAPI(title="Bag Counting Service")
 
 
+@app.get("/videos", response_model=list[Job])
+async def list_videos(limit: int = 50) -> list[Job]:
+    return job_store.list_all(limit=limit)
+
+
 @app.post("/videos", response_model=Job)
 async def upload_video(file: UploadFile) -> Job:
     if not file.filename:

@@ -5,5 +5,7 @@ venv/
 
 storage/input/*
 storage/output/*
+storage/jobs/*
 !storage/input/.gitkeep
 !storage/output/.gitkeep
+!storage/jobs/.gitkeep

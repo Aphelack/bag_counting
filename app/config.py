@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     def output_dir(self) -> Path:
         return self.data_dir / "output"
 
+    @property
+    def jobs_dir(self) -> Path:
+        return self.data_dir / "jobs"
+
 
 settings = Settings()
 settings.input_dir.mkdir(parents=True, exist_ok=True)
 settings.output_dir.mkdir(parents=True, exist_ok=True)
+settings.jobs_dir.mkdir(parents=True, exist_ok=True)

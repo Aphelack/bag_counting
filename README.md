@@ -17,9 +17,11 @@ always reports 0 bags.
 docker compose up --build
 ```
 
-API available at `http://localhost:8000` (docs at `/docs`). Uploaded and
-processed videos persist in `./storage/{input,output}` on the host, so they
-survive container recreation.
+API available at `http://localhost:8000` (docs at `/docs`). Uploaded videos,
+processed output, and job records (status/progress/bag count/anomalies)
+all persist in `./storage/{input,output,jobs}` on the host, so everything
+survives container recreation — including reopening a job from before a
+restart via the web UI or `GET /videos/{job_id}/status`.
 
 **GPU required for real detections.** `docker-compose.yml` requests a GPU
 reservation (needs `nvidia-container-toolkit` on the host) and the image
@@ -38,15 +40,18 @@ back if `docker compose up --build` hits something the training env didn't.
 ## Web UI
 
 `http://localhost:8000/` — a single-page UI (plain HTML/CSS/JS, no build
-step, no external assets) covering upload, start-processing, live status
-polling, bag count, and download. New anomalies (detected while polling)
-surface as a dismissible banner in addition to the running anomalies list.
-Recent jobs are kept in the browser's `localStorage` so you can reopen one
-after a page refresh. Source in `app/static/index.html`, served via
+step, no external assets, dark-mode aware) covering drag-and-drop upload,
+start-processing, live status polling, bag count, and download. New
+anomalies (detected while polling) surface as a dismissible banner in
+addition to the running anomalies list. The "recent jobs" list is fetched
+from the server (`GET /videos`), not browser storage — it reflects actual
+job history and keeps working after a restart, a page reload, or from a
+different browser. Source in `app/static/index.html`, served via
 `StaticFiles`.
 
 ## API
 
+- `GET /videos` — list recent jobs (`?limit=`, default 50), newest first.
 - `POST /videos` — multipart upload (`file`), returns a job with `pending` status.
 - `POST /videos/{job_id}/process` — starts async processing, returns immediately.
 - `GET /videos/{job_id}/status` — job status, progress, running bag count, anomalies.
@@ -58,7 +63,7 @@ after a page refresh. Source in `app/static/index.html`, served via
 app/
   main.py        FastAPI routes + static UI mount
   static/         web UI (index.html — plain HTML/JS, no build step)
-  jobs.py         in-memory job store (thread-safe)
+  jobs.py         JSON-file-backed job store (thread-safe, survives restarts)
   processing.py   per-video pipeline: batched detect -> track/count -> anomaly-check -> overlay -> write
   detector.py     RTMDetDetector (batched mmdet inference) + StubDetector fallback
   tracker.py      BagCounter: greedy IoU tracker + direction-aware counting-zone crossing
@@ -114,8 +119,10 @@ GPU batching). Instead, each frame is preprocessed through the model's own
 test pipeline, then all of them go through a single `model.test_step()`
 call together, so the GPU processes the whole batch in parallel per
 forward pass. `processing.py` reads/batches frames in groups of
-`DETECTION_BATCH_SIZE` (default 8, set to 32 in `docker-compose.yml` for a
-datacenter GPU) before calling `detect_batch()`; tracking, counting,
+`DETECTION_BATCH_SIZE` (config default 8; `docker-compose.yml` sets 64 for
+a datacenter GPU — RTMDet-tiny is small and inference-only, so there's
+likely still headroom on an A100; watch `nvidia-smi` during a run and push
+it higher if so) before calling `detect_batch()`; tracking, counting,
 anomaly-checking, drawing, and writing all still happen frame-by-frame in
 order afterward, since those depend on frame sequence — only detection
 benefits from batching.
@@ -164,5 +171,4 @@ rather than crashing the app.
 
 ## What's still to decide
 
-- Job persistence beyond in-memory (only matters if job history must survive a restart — video files already persist via the volume).
 - Whether more anomaly rules are worth adding (e.g. detector confidence collapse, implausible count spikes) — the `AnomalyRule` pattern makes this cheap to extend later.
