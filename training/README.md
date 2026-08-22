@@ -13,6 +13,11 @@ uv sync
 # mmcv needs a build matched to your installed torch/CUDA — install via mim,
 # not through uv/pyproject, so it can pick the right prebuilt wheel:
 uv run mim install mmengine "mmcv>=2.0.0,<2.2.0" mmdet
+# mmcv/mmdet pull in plain opencv-python alongside our opencv-python-headless
+# — having both installed breaks cv2 (AttributeError: module 'cv2' has no
+# attribute 'VideoCapture'), so clean up right after mim:
+uv pip uninstall opencv-python
+uv pip install --reinstall opencv-python-headless
 ```
 
 `torch`/`torchvision` are pinned to 2.1.2/cu121 in `pyproject.toml` (not left
