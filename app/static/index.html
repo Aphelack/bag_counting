@@ -249,6 +249,10 @@ const POLL_INTERVAL_MS = 2000;
 const STATUS_LABELS = {
   pending: "ожидает", processing: "обрабатывается", completed: "готово", failed: "ошибка",
 };
+const ANOMALY_LABELS = {
+  reverse_direction: "Обратное движение",
+  detection_gap: "Нет объектов в кадре",
+};
 
 let currentJobId = null;
 let pollTimer = null;
@@ -265,7 +269,11 @@ function statusBadge(status) {
 
 function notifyNewAnomalies(job) {
   const anomalies = job.anomalies || [];
-  const seen = seenAnomalyCounts[job.id] || 0;
+  const seen = seenAnomalyCounts[job.id];
+  // Not seeded yet for this job (shouldn't normally happen — showJob()
+  // seeds it — but fail safe rather than treat pre-existing anomalies as
+  // "new" the first time we somehow render without seeding).
+  if (seen === undefined) return;
   if (anomalies.length <= seen) return;
 
   const newOnes = anomalies.slice(seen);
@@ -273,8 +281,9 @@ function notifyNewAnomalies(job) {
 
   const latest = newOnes[newOnes.length - 1];
   const banner = el("anomaly-banner");
-  const suffix = newOnes.length > 1 ? ` (+${newOnes.length - 1} ещё)` : "";
-  el("anomaly-banner-text").textContent = `⚠ Аномалия [${latest.kind}]: ${latest.message}${suffix}`;
+  const label = ANOMALY_LABELS[latest.kind] || latest.kind;
+  const suffix = newOnes.length > 1 ? ` (+${newOnes.length - 1})` : "";
+  el("anomaly-banner-text").textContent = `⚠ ${label}: ${latest.message}${suffix}`;
   banner.hidden = false;
 }
 
@@ -376,6 +385,11 @@ function showJob(job) {
   currentJobId = job.id;
   el("job-section").hidden = false;
   el("anomaly-banner").hidden = true; // banner belongs to whichever job was showing before
+  // Mark whatever anomalies this job already has as "seen" the moment we
+  // open it — the banner is for anomalies detected *while watching*
+  // (during polling), not a retroactive alert for a job's whole history
+  // just because you opened it.
+  seenAnomalyCounts[job.id] = (job.anomalies || []).length;
   renderJob(job);
   el("job-section").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }

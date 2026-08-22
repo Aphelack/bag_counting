@@ -46,10 +46,7 @@ class ReverseDirectionRule:
                 frame=ctx.frame_idx,
                 timestamp_sec=ctx.timestamp_sec,
                 kind="reverse_direction",
-                message=(
-                    f"{ctx.reverse_crossings} object(s) crossed the counting zone "
-                    "against the belt's normal direction (net count already adjusted)"
-                ),
+                message="Мешок поехал назад по ленте",
             )
         ]
 
@@ -59,22 +56,26 @@ class DetectionGapRule:
     camera obstruction, or the detector losing the scene entirely.
 
     Fires once per gap (not every frame the gap continues), and resets as
-    soon as a detection appears again.
+    soon as a detection appears again. Threshold is in seconds, not
+    frames, so it doesn't silently assume a particular fps.
     """
 
-    def __init__(self, gap_frames_threshold: int = 125) -> None:  # ~5s @ 25fps
-        self._threshold = gap_frames_threshold
-        self._empty_streak = 0
+    def __init__(self, gap_seconds_threshold: float = 5.0) -> None:
+        self._threshold = gap_seconds_threshold
+        self._gap_start_sec: float | None = None
         self._flagged_this_streak = False
 
     def check(self, ctx: FrameContext) -> list[Anomaly]:
         if ctx.detections:
-            self._empty_streak = 0
+            self._gap_start_sec = None
             self._flagged_this_streak = False
             return []
 
-        self._empty_streak += 1
-        if self._empty_streak < self._threshold or self._flagged_this_streak:
+        if self._gap_start_sec is None:
+            self._gap_start_sec = ctx.timestamp_sec
+
+        gap_duration = ctx.timestamp_sec - self._gap_start_sec
+        if gap_duration < self._threshold or self._flagged_this_streak:
             return []
 
         self._flagged_this_streak = True
@@ -83,10 +84,7 @@ class DetectionGapRule:
                 frame=ctx.frame_idx,
                 timestamp_sec=ctx.timestamp_sec,
                 kind="detection_gap",
-                message=(
-                    f"No detections for {self._empty_streak} consecutive frames — "
-                    "possible belt stoppage or camera obstruction"
-                ),
+                message=f"Мешки не видны уже {gap_duration:.0f} сек",
             )
         ]
 

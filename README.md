@@ -143,10 +143,10 @@ Implemented so far:
   correct without this — it's a visibility signal, since a bag moving
   backwards on the belt (jostled, jammed, someone reaching in) is worth an
   operator's attention even when the net count stays right.
-- **`DetectionGapRule`** — flags a long stretch (default: 125 frames, ~5s
-  @ 25fps) with zero detections: possible belt stoppage, camera
-  obstruction, or the detector losing the scene. Fires once per gap, not
-  every frame it continues.
+- **`DetectionGapRule`** — flags a long stretch (default: 5 seconds, not
+  tied to a specific fps) with zero detections: possible belt stoppage,
+  camera obstruction, or the detector losing the scene. Fires once per
+  gap, not every frame it continues.
 
 Anomalies are returned in the job's `anomalies` field (`GET
 /videos/{job_id}/status`) and shown in the web UI both as a running list

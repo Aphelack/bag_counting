@@ -11,12 +11,15 @@ services:
       - DETECTOR_CONFIG_PATH=/models/rtmdet_bag.py
       - DETECTOR_CHECKPOINT_PATH=/models/checkpoint.pth
       - DETECTOR_DEVICE=cuda:0
-      # Frames per batched inference call. RTMDet-tiny is a small model
-      # (inference-only, no gradients kept), so 64 has real headroom left
-      # on an A100 — watch `nvidia-smi` during a run and push higher
-      # (128+) if utilization/memory still has room. Lower it (e.g. 4-8)
-      # on a smaller/consumer GPU if you hit out-of-memory errors.
-      - DETECTION_BATCH_SIZE=64
+      # Frames per batched inference call. RTMDet-tiny at ~640px is a
+      # small model doing inference-only work (no gradients/optimizer
+      # state kept, wrapped in torch.no_grad()) — on a 40GB card that
+      # should comfortably leave room well past 128. Can't verify the
+      # exact ceiling without a GPU here, so: watch `nvidia-smi` during a
+      # run and keep raising this (try 256) while memory has headroom.
+      # Lower it (e.g. 4-8) on a smaller/consumer GPU if you hit
+      # out-of-memory errors.
+      - DETECTION_BATCH_SIZE=128
     deploy:
       resources:
         reservations:
