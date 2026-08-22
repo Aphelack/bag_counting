@@ -5,8 +5,15 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10,<3.12"
 dependencies = [
-    "torch>=2.1",
-    "torchvision>=0.16",
+    # Pinned to a version OpenMMLab actually publishes prebuilt mmcv wheels
+    # for (their index tops out around torch 2.7/cu128 as of writing — mmcv
+    # development has slowed a lot, see experiments/README.md). Leaving
+    # this unpinned lets uv resolve the latest torch/CUDA build, which mim
+    # then can't find a matching mmcv wheel for and falls back to building
+    # mmcv from source — which fails on its own for unrelated reasons (see
+    # the setuptools pin below).
+    "torch==2.1.2",
+    "torchvision==0.16.2",
     "openmim>=0.3.9",
     # openmim's CLI imports pkg_resources (from setuptools) but doesn't
     # declare it as a dependency — uv venvs don't bundle setuptools by
@@ -18,3 +25,12 @@ dependencies = [
     "opencv-python-headless>=4.9",
     "numpy>=1.26,<2.0",
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu121" }]
+torchvision = [{ index = "pytorch-cu121" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true

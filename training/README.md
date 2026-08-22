@@ -15,6 +15,21 @@ uv sync
 uv run mim install mmengine "mmcv>=2.0.0,<2.2.0" mmdet
 ```
 
+`torch`/`torchvision` are pinned to 2.1.2/cu121 in `pyproject.toml` (not left
+open) because OpenMMLab's prebuilt `mmcv` wheels only go up to around torch
+2.7/cu128 as of writing — mmcv development has slowed a lot (see
+`../experiments/README.md`'s MMDetection maintenance note). An unpinned
+`torch` resolves to whatever's newest, `mim install mmcv` can't find a
+matching wheel for that, and falls back to building mmcv from source, which
+fails for unrelated reasons (its legacy `setup.py` needs `pkg_resources`,
+removed from `setuptools` 81+ — hence the `setuptools<81` pin too). A CUDA
+12.1 *runtime* wheel works fine on newer GPU drivers (driver forward
+compatibility), so this pin shouldn't need a matching CUDA *toolkit*
+install — but if `mim install mmcv` still can't find a wheel, check
+OpenMMLab's current supported matrix and adjust the pin here, in
+`[tool.uv.sources]` below, and in the `mim install` command's `mmcv`
+constraint together.
+
 Labeling (step 2) also needs the `sam3` package and its assets, in whichever
 environment you're already running `../experiments/notebooks/01_sam3_segmentation_test.ipynb`
 in:
