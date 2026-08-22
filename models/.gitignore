@@ -1,3 +1,5 @@
 *
 !.gitignore
 !.gitkeep
+!rtmdet_bag.py
+!checkpoint.pth

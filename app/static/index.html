@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Подсчёт мешков на конвейере</title>
+<title>Bag Counting</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -132,21 +132,6 @@
   .callout-error { background: var(--err-bg); color: var(--err-text); border-color: var(--err-border); }
   .callout-warn { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-border); }
 
-  .anomaly-banner {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.75rem;
-    background: var(--warn-bg);
-    color: var(--warn-text);
-    border: 1px solid var(--warn-border);
-    border-radius: 12px;
-    padding: 0.85rem 1.1rem;
-    margin-bottom: 1.25rem;
-    font-size: 0.9rem;
-    box-shadow: var(--shadow);
-  }
-
   ul.anomalies { margin: 0.4rem 0 0; padding-left: 1.1rem; }
   ul.anomalies li { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.2rem; }
 
@@ -181,38 +166,33 @@
 <body>
 
 <header>
-  <h1>📦 Подсчёт мешков на конвейере</h1>
-  <p>Загрузите видео с конвейера — сервис найдёт мешки и посчитает их.</p>
+  <h1>📦 Bag Counting</h1>
+  <p>Upload a conveyor video — the service finds bags and counts them.</p>
 </header>
 
-<div id="anomaly-banner" class="anomaly-banner" hidden>
-  <span id="anomaly-banner-text"></span>
-  <button id="anomaly-banner-dismiss" class="ghost" title="Скрыть">&times;</button>
-</div>
-
 <section id="upload-section">
-  <h2>Загрузка видео</h2>
+  <h2>Upload video</h2>
   <label class="dropzone" id="dropzone" for="file-input">
     <div class="icon">🎞️</div>
-    <div>Перетащите видео сюда или нажмите, чтобы выбрать файл</div>
-    <div class="hint">MP4 и другие распространённые форматы</div>
+    <div>Drag a video here, or click to choose a file</div>
+    <div class="hint">MP4 and other common formats</div>
     <div class="filename" id="selected-filename"></div>
   </label>
   <input type="file" id="file-input" accept="video/*">
   <div class="row">
-    <button id="upload-btn" disabled>Загрузить</button>
+    <button id="upload-btn" disabled>Upload</button>
   </div>
   <div id="upload-error" class="callout callout-error" hidden></div>
 </section>
 
 <section id="job-section" hidden>
-  <h2>Текущее задание</h2>
-  <div class="field"><span class="label">Файл</span><span id="job-filename" class="value"></span></div>
+  <h2>Current job</h2>
+  <div class="field"><span class="label">File</span><span id="job-filename" class="value"></span></div>
   <div class="field"><span class="label">ID</span><code id="job-id" class="value"></code></div>
-  <div class="field"><span class="label">Статус</span><span id="job-status" class="value"></span></div>
+  <div class="field"><span class="label">Status</span><span id="job-status" class="value"></span></div>
 
   <div class="row" style="margin: 1rem 0;">
-    <button id="process-btn">Начать обработку</button>
+    <button id="process-btn">Start processing</button>
   </div>
 
   <div id="progress-wrap" hidden>
@@ -220,43 +200,38 @@
     <div class="muted" id="progress-text" style="margin-top: 0.3rem;"></div>
   </div>
 
-  <div class="field"><span class="label">Мешков посчитано</span><span id="bag-count" class="value">0</span></div>
+  <div class="field"><span class="label">Bags counted</span><span id="bag-count" class="value">0</span></div>
 
   <div id="anomalies-wrap" hidden>
-    <div class="label muted">Аномалии за время обработки:</div>
+    <div class="label muted">Anomalies during processing:</div>
     <ul id="anomalies-list" class="anomalies"></ul>
   </div>
 
   <div id="job-error" class="callout callout-error" hidden></div>
 
   <div class="row" style="margin-top: 1rem;">
-    <a id="download-link" href="#" hidden><button>⬇ Скачать результат</button></a>
+    <a id="download-link" href="#" hidden><button>⬇ Download result</button></a>
   </div>
 </section>
 
 <section>
   <div class="row" style="justify-content: space-between; margin-bottom: 1rem;">
-    <h2 style="margin: 0;">Недавние задания</h2>
-    <button class="ghost" id="refresh-jobs-btn" title="Обновить">⟳</button>
+    <h2 style="margin: 0;">Recent jobs</h2>
+    <button class="ghost" id="refresh-jobs-btn" title="Refresh">⟳</button>
   </div>
   <ul id="job-list" class="job-list"></ul>
-  <p id="no-jobs" class="muted">Пока нет загруженных видео.</p>
+  <p id="no-jobs" class="muted">No videos uploaded yet.</p>
 </section>
 
 <script>
 const API = "";
 const POLL_INTERVAL_MS = 2000;
 const STATUS_LABELS = {
-  pending: "ожидает", processing: "обрабатывается", completed: "готово", failed: "ошибка",
-};
-const ANOMALY_LABELS = {
-  reverse_direction: "Обратное движение",
-  detection_gap: "Нет объектов в кадре",
+  pending: "pending", processing: "processing", completed: "completed", failed: "failed",
 };
 
 let currentJobId = null;
 let pollTimer = null;
-const seenAnomalyCounts = {}; // jobId -> how many anomalies we've already notified about
 
 const el = (id) => document.getElementById(id);
 
@@ -265,26 +240,6 @@ function statusBadge(status) {
   span.className = "badge badge-" + status;
   span.textContent = STATUS_LABELS[status] || status;
   return span;
-}
-
-function notifyNewAnomalies(job) {
-  const anomalies = job.anomalies || [];
-  const seen = seenAnomalyCounts[job.id];
-  // Not seeded yet for this job (shouldn't normally happen — showJob()
-  // seeds it — but fail safe rather than treat pre-existing anomalies as
-  // "new" the first time we somehow render without seeding).
-  if (seen === undefined) return;
-  if (anomalies.length <= seen) return;
-
-  const newOnes = anomalies.slice(seen);
-  seenAnomalyCounts[job.id] = anomalies.length;
-
-  const latest = newOnes[newOnes.length - 1];
-  const banner = el("anomaly-banner");
-  const label = ANOMALY_LABELS[latest.kind] || latest.kind;
-  const suffix = newOnes.length > 1 ? ` (+${newOnes.length - 1})` : "";
-  el("anomaly-banner-text").textContent = `⚠ ${label}: ${latest.message}${suffix}`;
-  banner.hidden = false;
 }
 
 async function apiFetch(path, options) {
@@ -335,7 +290,7 @@ async function uploadVideo() {
 
   const btn = el("upload-btn");
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Загрузка…';
+  btn.innerHTML = '<span class="spinner"></span> Uploading…';
   try {
     const job = await apiFetch("/videos", { method: "POST", body: formData });
     showJob(job);
@@ -343,11 +298,11 @@ async function uploadVideo() {
     setSelectedFile(null);
     refreshJobList();
   } catch (err) {
-    errorBox.textContent = "Ошибка загрузки: " + err.message;
+    errorBox.textContent = "Upload failed: " + err.message;
     errorBox.hidden = false;
   } finally {
     btn.disabled = !fileInput.files.length;
-    btn.textContent = "Загрузить";
+    btn.textContent = "Upload";
   }
 }
 
@@ -361,7 +316,7 @@ async function startProcessing() {
     startPolling();
     refreshJobList();
   } catch (err) {
-    el("job-error").textContent = "Ошибка запуска обработки: " + err.message;
+    el("job-error").textContent = "Failed to start processing: " + err.message;
     el("job-error").hidden = false;
     el("process-btn").disabled = false;
   }
@@ -376,7 +331,7 @@ function openJob(jobId) {
       if (job.status === "pending" || job.status === "processing") startPolling();
     })
     .catch((err) => {
-      el("job-error").textContent = "Не удалось получить статус: " + err.message;
+      el("job-error").textContent = "Failed to fetch status: " + err.message;
       el("job-error").hidden = false;
     });
 }
@@ -384,12 +339,6 @@ function openJob(jobId) {
 function showJob(job) {
   currentJobId = job.id;
   el("job-section").hidden = false;
-  el("anomaly-banner").hidden = true; // banner belongs to whichever job was showing before
-  // Mark whatever anomalies this job already has as "seen" the moment we
-  // open it — the banner is for anomalies detected *while watching*
-  // (during polling), not a retroactive alert for a job's whole history
-  // just because you opened it.
-  seenAnomalyCounts[job.id] = (job.anomalies || []).length;
   renderJob(job);
   el("job-section").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -406,7 +355,7 @@ function renderJob(job) {
 
   const processBtn = el("process-btn");
   processBtn.disabled = job.status !== "pending";
-  processBtn.textContent = job.status === "pending" ? "Начать обработку" : "Обработка запущена";
+  processBtn.textContent = job.status === "pending" ? "Start processing" : "Processing started";
 
   const progressWrap = el("progress-wrap");
   if (job.status === "processing") {
@@ -424,13 +373,12 @@ function renderJob(job) {
     list.innerHTML = "";
     for (const a of job.anomalies) {
       const li = document.createElement("li");
-      li.textContent = `[${a.timestamp_sec.toFixed(1)}s, кадр ${a.frame}] ${a.kind}: ${a.message}`;
+      li.textContent = `[${a.timestamp_sec.toFixed(1)}s, frame ${a.frame}] ${a.kind}: ${a.message}`;
       list.append(li);
     }
   } else {
     anomaliesWrap.hidden = true;
   }
-  notifyNewAnomalies(job);
 
   const errorBox = el("job-error");
   if (job.status === "failed" && job.error) {
@@ -461,7 +409,7 @@ function startPolling() {
       }
     } catch (err) {
       stopPolling();
-      el("job-error").textContent = "Не удалось получить статус: " + err.message;
+      el("job-error").textContent = "Failed to fetch status: " + err.message;
       el("job-error").hidden = false;
     }
   }, POLL_INTERVAL_MS);
@@ -499,7 +447,7 @@ async function refreshJobList() {
     name.textContent = job.filename;
     const meta = document.createElement("span");
     meta.className = "job-meta";
-    meta.textContent = new Date(job.created_at).toLocaleString("ru-RU");
+    meta.textContent = new Date(job.created_at).toLocaleString("en-US");
     info.append(name, meta);
 
     const right = document.createElement("div");
@@ -507,7 +455,7 @@ async function refreshJobList() {
     right.append(statusBadge(job.status));
     const btn = document.createElement("button");
     btn.className = "secondary";
-    btn.textContent = "Открыть";
+    btn.textContent = "Open";
     btn.onclick = () => openJob(job.id);
     right.append(btn);
 
@@ -518,7 +466,6 @@ async function refreshJobList() {
 
 el("upload-btn").addEventListener("click", uploadVideo);
 el("process-btn").addEventListener("click", startProcessing);
-el("anomaly-banner-dismiss").addEventListener("click", () => { el("anomaly-banner").hidden = true; });
 el("refresh-jobs-btn").addEventListener("click", refreshJobList);
 
 refreshJobList();

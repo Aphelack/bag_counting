@@ -140,8 +140,8 @@ Draws per-frame detections on the full video and prints detection-count
 stats (mean/min/max per frame, % of frames with zero detections — a quick
 signal for missed-detection gaps before we design the tracking/counting
 layer on top). This does **not** do cross-frame tracking or deduplicated
-belt counting — that algorithm is still an open decision (see
-`../app/tracker.py`); this script only validates the detector in isolation.
+belt counting — that's implemented separately in `../app/tracker.py`; this
+script only validates the detector in isolation.
 
 ## 5. Eyeball predictions on frames the model never saw
 
@@ -155,3 +155,13 @@ Samples frames offset from the labeling `--stride` grid (so none of them were
 in train or val), runs the trained checkpoint on them, and draws the boxes —
 this is the actual check for whether the detector generalizes, versus just
 agreeing with SAM3's own labels (see the mAP caveat in step 3).
+
+## 6. Deploy the checkpoint to the app
+
+```bash
+cp configs/rtmdet_bag.py ../models/rtmdet_bag.py
+cp work_dirs/rtmdet_bag/best_coco_bbox_mAP_epoch_*.pth ../models/checkpoint.pth
+```
+
+See the root `README.md`'s "Detector setup" section for how the running
+service picks these up.

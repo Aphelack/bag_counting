@@ -46,7 +46,7 @@ class ReverseDirectionRule:
                 frame=ctx.frame_idx,
                 timestamp_sec=ctx.timestamp_sec,
                 kind="reverse_direction",
-                message="Мешок поехал назад по ленте",
+                message="Bag moved backward on the belt",
             )
         ]
 
@@ -84,7 +84,7 @@ class DetectionGapRule:
                 frame=ctx.frame_idx,
                 timestamp_sec=ctx.timestamp_sec,
                 kind="detection_gap",
-                message=f"Мешки не видны уже {gap_duration:.0f} сек",
+                message=f"No bags detected for {gap_duration:.0f}s",
             )
         ]
 

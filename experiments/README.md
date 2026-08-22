@@ -1,8 +1,8 @@
 # Experiments
 
-Локальное окружение (uv) для исследовательских ноутбуков — отдельно от `app/`,
-т.к. сюда идут тяжёлые/специфичные ML-зависимости (torch, transformers), которые
-не нужны продовому FastAPI-сервису.
+Local uv environment for research notebooks — kept separate from `app/`
+because it pulls in heavy/specific ML dependencies (torch, transformers)
+that the production FastAPI service doesn't need.
 
 ## Setup
 
@@ -12,22 +12,26 @@ uv sync
 uv run python -m ipykernel install --user --name bag-counting-experiments --display-name "bag-counting-experiments"
 ```
 
-Затем открыть `notebooks/` в Jupyter/VS Code и выбрать kernel `bag-counting-experiments`.
+Then open `notebooks/` in Jupyter/VS Code and select the
+`bag-counting-experiments` kernel.
 
 ## Notebooks
 
-- `01_sam3_segmentation_test.ipynb` — интерактивный тест SAM 3 (text-prompt сегментация,
-  `facebookresearch/sam3` native API) на кадрах из `../storage/input/input.mp4`. Требует
-  CUDA GPU, пакет `sam3` (`uv pip install git+https://github.com/facebookresearch/sam3.git`)
-  и локально скачанный checkpoint + BPE vocab — see cells in the notebook. Сэмплирование
-  кадров/визуализация работают без GPU.
+- `01_sam3_segmentation_test.ipynb` — interactive SAM 3 test (text-prompt
+  segmentation, `facebookresearch/sam3` native API) on frames from
+  `../storage/input/input.mp4`. Requires a CUDA GPU, the `sam3` package
+  (`uv pip install git+https://github.com/facebookresearch/sam3.git`), and
+  a locally downloaded checkpoint + BPE vocab — see the cells in the
+  notebook. Frame sampling/visualization work without a GPU.
 
-  ⚠️ На момент последнего обновления в ноутбуке был захардкожен HF-токен в открытом виде —
-  если репозиторий публикуется на GitHub, токен нужно отозвать на
-  huggingface.co/settings/tokens и заменить на чтение из переменной окружения.
+  ⚠️ At one point this notebook had a hardcoded HF token in plain text —
+  if you're reusing history from this repo, revoke that token at
+  huggingface.co/settings/tokens and read it from an environment variable
+  instead.
 
 ## Scripts
 
-- `scripts/label_with_sam3.py` — та же SAM3-логика, что и в ноутбуке, но прогоняется по
-  всему видео (не по горстке кадров) и сразу пишет COCO-датасет для `../training/`. См.
-  `../training/README.md` за полным пайплайном разметка → обучение → инференс.
+- `scripts/label_with_sam3.py` — the same SAM3 logic as the notebook, but
+  run over the entire video (not a handful of frames) and writes a COCO
+  dataset straight to `../training/`. See `../training/README.md` for the
+  full labeling → training → inference pipeline.
