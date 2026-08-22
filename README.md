@@ -5,13 +5,11 @@ uploaded video.
 
 ## Status
 
-HTTP API, async job pipeline, video read/write, and overlay rendering all
-work end-to-end. Detection (RTMDet via MMDetection) and tracking/counting
-(IoU tracker + counting-zone crossing) are implemented — see "Detector
-setup" below to enable real detections; without a configured checkpoint the
-service still runs, using a no-op stub that always reports 0 bags.
-Anomaly monitoring (`app/anomalies.py`) is still a stub — see "What's still
-to decide".
+HTTP API, async job pipeline, video read/write, overlay rendering, batched
+GPU detection, tracking/counting, and anomaly monitoring all work
+end-to-end. See "Detector setup" below to enable real detections; without a
+configured checkpoint the service still runs, using a no-op stub that
+always reports 0 bags.
 
 ## Run
 
@@ -41,9 +39,11 @@ back if `docker compose up --build` hits something the training env didn't.
 
 `http://localhost:8000/` — a single-page UI (plain HTML/CSS/JS, no build
 step, no external assets) covering upload, start-processing, live status
-polling, bag count, anomalies, and download. Recent jobs are kept in the
-browser's `localStorage` so you can reopen one after a page refresh. Source
-in `app/static/index.html`, served via `StaticFiles`.
+polling, bag count, and download. New anomalies (detected while polling)
+surface as a dismissible banner in addition to the running anomalies list.
+Recent jobs are kept in the browser's `localStorage` so you can reopen one
+after a page refresh. Source in `app/static/index.html`, served via
+`StaticFiles`.
 
 ## API
 
@@ -56,14 +56,15 @@ in `app/static/index.html`, served via `StaticFiles`.
 
 ```
 app/
-  main.py        FastAPI routes
+  main.py        FastAPI routes + static UI mount
+  static/         web UI (index.html — plain HTML/JS, no build step)
   jobs.py         in-memory job store (thread-safe)
-  processing.py   per-video pipeline: read -> detect -> track/count -> overlay -> write
-  detector.py     RTMDetDetector (mmdet inference) + StubDetector fallback
-  tracker.py      BagCounter: greedy IoU tracker + counting-zone crossing
-  anomalies.py    AnomalyMonitor interface (still a stub)
+  processing.py   per-video pipeline: batched detect -> track/count -> anomaly-check -> overlay -> write
+  detector.py     RTMDetDetector (batched mmdet inference) + StubDetector fallback
+  tracker.py      BagCounter: greedy IoU tracker + direction-aware counting-zone crossing
+  anomalies.py    AnomalyMonitor + per-anomaly-type AnomalyRule classes
   models.py       Job/Anomaly schemas
-  config.py       storage paths, detector config/checkpoint paths
+  config.py       storage paths, detector config/checkpoint/batch-size settings
 ```
 
 Processing runs on a worker thread via `asyncio.to_thread`, so the HTTP
@@ -103,6 +104,48 @@ the event loop.
   is tuned to `input.mp4`'s fixed camera angle; re-tune for a different
   camera setup.
 
+## Performance: batched detection
+
+`RTMDetDetector.detect_batch()` in `app/detector.py` builds and runs a real
+batched forward pass — not `mmdet.apis.inference_detector()`, which loops
+over images one at a time internally even when given a list (each image
+gets its own `model.test_step()` call, so passing it a list is not actual
+GPU batching). Instead, each frame is preprocessed through the model's own
+test pipeline, then all of them go through a single `model.test_step()`
+call together, so the GPU processes the whole batch in parallel per
+forward pass. `processing.py` reads/batches frames in groups of
+`DETECTION_BATCH_SIZE` (default 8, set to 32 in `docker-compose.yml` for a
+datacenter GPU) before calling `detect_batch()`; tracking, counting,
+anomaly-checking, drawing, and writing all still happen frame-by-frame in
+order afterward, since those depend on frame sequence — only detection
+benefits from batching.
+
+## Anomaly monitoring
+
+`app/anomalies.py`: each anomaly type is its own small class (`AnomalyRule`
+protocol — a `check(ctx)` returning zero or more `Anomaly` records).
+`AnomalyMonitor` just runs the configured rules against a per-frame
+`FrameContext` and collects the results — adding a new anomaly type means
+adding a new class and listing it in `AnomalyMonitor.DEFAULT_RULES`;
+nothing else in the pipeline changes.
+
+Implemented so far:
+
+- **`ReverseDirectionRule`** — flags every reverse-direction zone crossing
+  (see "Direction-aware counting" above). The count itself is already
+  correct without this — it's a visibility signal, since a bag moving
+  backwards on the belt (jostled, jammed, someone reaching in) is worth an
+  operator's attention even when the net count stays right.
+- **`DetectionGapRule`** — flags a long stretch (default: 125 frames, ~5s
+  @ 25fps) with zero detections: possible belt stoppage, camera
+  obstruction, or the detector losing the scene. Fires once per gap, not
+  every frame it continues.
+
+Anomalies are returned in the job's `anomalies` field (`GET
+/videos/{job_id}/status`) and shown in the web UI both as a running list
+and as a dismissible banner that appears when a *new* anomaly shows up
+during polling.
+
 ## Detector setup
 
 1. Train a checkpoint via `training/` (see its README): label with SAM 3,
@@ -121,7 +164,5 @@ rather than crashing the app.
 
 ## What's still to decide
 
-- Anomaly definitions and detection method (`app/anomalies.py`).
 - Job persistence beyond in-memory (only matters if job history must survive a restart — video files already persist via the volume).
-
-These will be filled in as we settle the design.
+- Whether more anomaly rules are worth adding (e.g. detector confidence collapse, implausible count spikes) — the `AnomalyRule` pattern makes this cheap to extend later.

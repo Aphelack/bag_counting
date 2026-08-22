@@ -67,11 +67,37 @@
   ul.recent-jobs button { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
   .muted { color: #888; font-size: 0.9rem; }
   code { background: #f2f2f2; padding: 0.1rem 0.3rem; border-radius: 4px; }
+  .anomaly-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+    background: #fff4e5;
+    color: #7a4a00;
+    border: 1px solid #ffd699;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.9rem;
+  }
+  .anomaly-banner button {
+    background: transparent;
+    color: #7a4a00;
+    border: none;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0 0.25rem;
+  }
 </style>
 </head>
 <body>
 
 <h1>Подсчёт мешков на конвейере</h1>
+
+<div id="anomaly-banner" class="anomaly-banner" hidden>
+  <span id="anomaly-banner-text"></span>
+  <button id="anomaly-banner-dismiss" title="Скрыть">&times;</button>
+</div>
 
 <section id="upload-section">
   <h2>Загрузка видео</h2>
@@ -123,8 +149,25 @@ const POLL_INTERVAL_MS = 2000;
 
 let currentJobId = null;
 let pollTimer = null;
+const seenAnomalyCounts = {}; // jobId -> how many anomalies we've already notified about
 
 const el = (id) => document.getElementById(id);
+
+function notifyNewAnomalies(job) {
+  const anomalies = job.anomalies || [];
+  const seen = seenAnomalyCounts[job.id] || 0;
+  if (anomalies.length <= seen) return;
+
+  const newOnes = anomalies.slice(seen);
+  seenAnomalyCounts[job.id] = anomalies.length;
+
+  const latest = newOnes[newOnes.length - 1];
+  const banner = el("anomaly-banner");
+  const suffix = newOnes.length > 1 ? ` (+${newOnes.length - 1} ещё)` : "";
+  el("anomaly-banner-text").textContent =
+    `⚠ Аномалия [${latest.kind}]: ${latest.message}${suffix}`;
+  banner.hidden = false;
+}
 
 function loadRecentJobs() {
   try {
@@ -232,6 +275,7 @@ function openJob(jobId) {
 function showJob(job) {
   currentJobId = job.id;
   el("job-section").hidden = false;
+  el("anomaly-banner").hidden = true; // banner belongs to whichever job was showing before
   renderJob(job);
 }
 
@@ -271,6 +315,7 @@ function renderJob(job) {
   } else {
     anomaliesWrap.hidden = true;
   }
+  notifyNewAnomalies(job);
 
   const errorBox = el("job-error");
   if (job.status === "failed" && job.error) {
@@ -317,6 +362,7 @@ function stopPolling() {
 
 el("upload-btn").addEventListener("click", uploadVideo);
 el("process-btn").addEventListener("click", startProcessing);
+el("anomaly-banner-dismiss").addEventListener("click", () => { el("anomaly-banner").hidden = true; });
 
 renderRecentJobs();
 </script>

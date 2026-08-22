@@ -2,9 +2,17 @@
 
 StubDetector is a no-op placeholder that keeps the pipeline runnable
 without a GPU/trained checkpoint. RTMDetDetector wraps the model trained in
-../training/ (see its README) via mmdet's inference API — imported lazily
-inside the class so this module stays importable in environments without
-mmdet installed (e.g. this project's own CPU-only dev machine).
+../training/ (see its README) — imported lazily inside the class so this
+module stays importable in environments without mmdet installed (e.g. this
+project's own CPU-only dev machine).
+
+Batched, not mmdet.apis.inference_detector: that convenience function loops
+over images one at a time internally even when given a list (each image
+gets its own model.test_step() call) — passing it a list is not real GPU
+batching. RTMDetDetector builds the batch itself (preprocess each frame
+through the model's own test pipeline, then a single model.test_step()
+call across the whole batch) so a GPU actually processes multiple frames
+in parallel per forward pass, which matters a lot for a 15000-frame video.
 """
 from dataclasses import dataclass
 from typing import Protocol
@@ -22,33 +30,56 @@ class Detection:
 
 
 class BagDetector(Protocol):
-    def detect(self, frame: np.ndarray) -> list[Detection]: ...
+    def detect_batch(self, frames: list[np.ndarray]) -> list[list[Detection]]: ...
 
 
 class StubDetector:
-    def detect(self, frame: np.ndarray) -> list[Detection]:
-        return []
+    def detect_batch(self, frames: list[np.ndarray]) -> list[list[Detection]]:
+        return [[] for _ in frames]
 
 
 class RTMDetDetector:
     def __init__(self, config_path: str, checkpoint_path: str, device: str, score_threshold: float) -> None:
+        import torch
+        from mmcv.transforms import Compose
         from mmdet.apis import init_detector
+        from mmdet.utils import get_test_pipeline_cfg
 
+        self._torch = torch
         self._model = init_detector(config_path, checkpoint_path, device=device)
         self._score_threshold = score_threshold
 
-    def detect(self, frame: np.ndarray) -> list[Detection]:
-        from mmdet.apis import inference_detector
+        cfg = self._model.cfg.copy()
+        test_pipeline_cfg = get_test_pipeline_cfg(cfg)
+        test_pipeline_cfg[0].type = "mmdet.LoadImageFromNDArray"  # frames are arrays, not file paths
+        self._test_pipeline = Compose(test_pipeline_cfg)
 
-        result = inference_detector(self._model, frame)
-        instances = result.pred_instances
-        scores = instances.scores.cpu().numpy()
-        bboxes = instances.bboxes.cpu().numpy()
-        keep = scores >= self._score_threshold
-        return [
-            Detection(bbox=tuple(float(v) for v in box), score=float(score))
-            for box, score in zip(bboxes[keep], scores[keep])
-        ]
+    def detect_batch(self, frames: list[np.ndarray]) -> list[list[Detection]]:
+        if not frames:
+            return []
+
+        processed = [self._test_pipeline(dict(img=frame, img_id=0)) for frame in frames]
+        batch = {
+            "inputs": [p["inputs"] for p in processed],
+            "data_samples": [p["data_samples"] for p in processed],
+        }
+
+        with self._torch.no_grad():
+            results = self._model.test_step(batch)
+
+        all_detections = []
+        for result in results:
+            instances = result.pred_instances
+            scores = instances.scores.cpu().numpy()
+            bboxes = instances.bboxes.cpu().numpy()
+            keep = scores >= self._score_threshold
+            all_detections.append(
+                [
+                    Detection(bbox=tuple(float(v) for v in box), score=float(score))
+                    for box, score in zip(bboxes[keep], scores[keep])
+                ]
+            )
+        return all_detections
 
 
 _detector: BagDetector | None = None

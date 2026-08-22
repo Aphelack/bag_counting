@@ -2,13 +2,21 @@
 
 Runs synchronously on a worker thread (see main.py) so it never blocks the
 event loop.
+
+Frames are read and detected in batches (see app/detector.py for why
+batching needs to happen explicitly rather than through mmdet's inference
+convenience function) — detection is the only step that benefits from
+batching; tracking/counting/drawing/writing all depend on frame order, so
+each batch is still walked frame-by-frame in order after the batched
+detect_batch() call returns.
 """
 import logging
 from pathlib import Path
 
 import cv2
 
-from app.anomalies import AnomalyMonitor
+from app.anomalies import AnomalyMonitor, FrameContext
+from app.config import settings
 from app.detector import BagDetector, get_detector
 from app.jobs import job_store
 from app.models import JobStatus
@@ -36,27 +44,49 @@ def run(job_id: str, input_path: Path, output_path: Path, detector: BagDetector 
 
     writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
-    anomalies = []
+    anomalies: list = []
     frame_idx = 0
     try:
-        while True:
+        batch: list = []
+        video_ended = False
+        while not video_ended:
             ok, frame = cap.read()
-            if not ok:
+            if ok:
+                batch.append(frame)
+            else:
+                video_ended = True
+
+            if len(batch) < settings.detection_batch_size and not video_ended:
+                continue
+            if not batch:
                 break
 
-            detections = detector.detect(frame)
-            counter.update(detections, frame_idx)
-            anomalies.extend(monitor.check(detections, frame_idx, fps))
-            _draw_overlay(frame, detections, counter.total, counter.zone)
-            writer.write(frame)
-
-            frame_idx += 1
-            if frame_idx % PROGRESS_UPDATE_EVERY_N_FRAMES == 0:
-                job_store.update(
-                    job_id,
-                    progress=min(frame_idx / total_frames, 1.0),
-                    bag_count=counter.total,
+            batch_detections = detector.detect_batch(batch)
+            for frame_in_batch, detections in zip(batch, batch_detections):
+                counter.update(detections, frame_idx)
+                anomalies.extend(
+                    monitor.check(
+                        FrameContext(
+                            frame_idx=frame_idx,
+                            timestamp_sec=frame_idx / fps,
+                            detections=detections,
+                            bag_count=counter.total,
+                            forward_crossings=counter.last_forward_crossings,
+                            reverse_crossings=counter.last_reverse_crossings,
+                        )
+                    )
                 )
+                _draw_overlay(frame_in_batch, detections, counter.total, counter.zone)
+                writer.write(frame_in_batch)
+
+                frame_idx += 1
+                if frame_idx % PROGRESS_UPDATE_EVERY_N_FRAMES == 0:
+                    job_store.update(
+                        job_id,
+                        progress=min(frame_idx / total_frames, 1.0),
+                        bag_count=counter.total,
+                    )
+            batch = []
     finally:
         cap.release()
         writer.release()

@@ -11,6 +11,11 @@ services:
       - DETECTOR_CONFIG_PATH=/models/rtmdet_bag.py
       - DETECTOR_CHECKPOINT_PATH=/models/checkpoint.pth
       - DETECTOR_DEVICE=cuda:0
+      # Frames per batched inference call. 32 is a reasonable starting
+      # point for a modern datacenter GPU (A100 etc.) — raise it further
+      # if GPU utilization still has headroom; lower it (e.g. 4-8) on a
+      # smaller/consumer GPU if you hit out-of-memory errors.
+      - DETECTION_BATCH_SIZE=32
     deploy:
       resources:
         reservations:

@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     detector_checkpoint_path: Path | None = None
     detector_device: str = "cuda:0"
     detection_score_threshold: float = 0.3
+    # Frames per batched inference call. Conservative default for small/CPU
+    # setups — raise via env var on bigger GPUs (e.g. 32-64 on an A100).
+    detection_batch_size: int = 8
 
     @property
     def input_dir(self) -> Path:

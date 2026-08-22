@@ -103,6 +103,10 @@ class BagCounter:
         self.total = 0
         self.forward_count = 0
         self.reverse_count = 0
+        # How many crossings happened on the *most recent* update() call —
+        # what the anomaly monitor watches for reverse-direction events.
+        self.last_forward_crossings = 0
+        self.last_reverse_crossings = 0
         self._tracks: dict[int, Track] = {}
         self._next_id = 1
         self._iou_threshold = iou_threshold
@@ -171,6 +175,9 @@ class BagCounter:
                 self._tracks[self._next_id] = Track(id=self._next_id, bbox=det.bbox)
                 self._next_id += 1
 
+        self.last_forward_crossings = 0
+        self.last_reverse_crossings = 0
+
         for track in self._tracks.values():
             if track.counted or not in_zone(centroid(track.bbox), self._zone):
                 continue
@@ -184,11 +191,14 @@ class BagCounter:
                 self._reference_direction = track.velocity
                 self.total += 1
                 self.forward_count += 1
+                self.last_forward_crossings += 1
             elif dot(track.velocity, self._reference_direction) >= 0:
                 self.total += 1
                 self.forward_count += 1
+                self.last_forward_crossings += 1
             else:
                 self.total -= 1
                 self.reverse_count += 1
+                self.last_reverse_crossings += 1
 
         return self.total
