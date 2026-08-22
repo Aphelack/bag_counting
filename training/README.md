@@ -20,6 +20,14 @@ uv pip uninstall opencv-python
 uv pip install --reinstall opencv-python-headless
 ```
 
+> **Every time you run `uv sync` after this, re-run the two lines below it
+> again too.** `mmengine`/`mmcv`/`mmdet` are installed via `mim`, not
+> declared in `pyproject.toml`, so they're invisible to uv's lockfile —
+> `uv sync` treats them as extraneous and silently removes them, which
+> shows up later as `ModuleNotFoundError: No module named 'mmdet'` with no
+> obvious cause. `opencv-python` creeping back in after a fresh `mim
+> install` needs the same cleanup pass each time too.
+
 `torch`/`torchvision` are pinned to 2.1.2/cu121 in `pyproject.toml` (not left
 open) because OpenMMLab's prebuilt `mmcv` wheels only go up to around torch
 2.7/cu128 as of writing — mmcv development has slowed a lot (see
