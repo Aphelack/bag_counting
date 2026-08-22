@@ -13,20 +13,28 @@ uv sync
 # mmcv needs a build matched to your installed torch/CUDA — install via mim,
 # not through uv/pyproject, so it can pick the right prebuilt wheel:
 uv run mim install mmengine "mmcv>=2.0.0,<2.2.0" mmdet
-# mmcv/mmdet pull in plain opencv-python alongside our opencv-python-headless
-# — having both installed breaks cv2 (AttributeError: module 'cv2' has no
-# attribute 'VideoCapture'), so clean up right after mim:
+# mim installs via plain pip internally, which ignores pyproject.toml's
+# pins entirely and will happily break both of these:
+# 1. mmcv/mmdet pull in plain opencv-python alongside our
+#    opencv-python-headless — having both breaks cv2 (AttributeError:
+#    module 'cv2' has no attribute 'VideoCapture').
+# 2. mmcv/mmdet's own deps drag numpy up to 2.x, but our pinned
+#    torch==2.1.2 was compiled against NumPy 1.x — mismatched ABI breaks
+#    torch/numpy interop (RuntimeError: Numpy is not available, or a
+#    "compiled using NumPy 1.x cannot be run in NumPy 2.x" warning first).
+# Fix both right after every mim install:
 uv pip uninstall opencv-python
 uv pip install --reinstall opencv-python-headless
+uv pip install "numpy<2.0"
 ```
 
-> **Every time you run `uv sync` after this, re-run the two lines below it
+> **Every time you run `uv sync` after this, redo the four lines below it
 > again too.** `mmengine`/`mmcv`/`mmdet` are installed via `mim`, not
 > declared in `pyproject.toml`, so they're invisible to uv's lockfile —
 > `uv sync` treats them as extraneous and silently removes them, which
 > shows up later as `ModuleNotFoundError: No module named 'mmdet'` with no
-> obvious cause. `opencv-python` creeping back in after a fresh `mim
-> install` needs the same cleanup pass each time too.
+> obvious cause. `opencv-python` and `numpy>=2.0` creeping back in after a
+> fresh `mim install` need the same cleanup pass each time too.
 
 `torch`/`torchvision` are pinned to 2.1.2/cu121 in `pyproject.toml` (not left
 open) because OpenMMLab's prebuilt `mmcv` wheels only go up to around torch
