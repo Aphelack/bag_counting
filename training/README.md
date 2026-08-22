@@ -24,7 +24,7 @@ uv run mim install mmengine "mmcv>=2.0.0,<2.2.0" mmdet
 #    "compiled using NumPy 1.x cannot be run in NumPy 2.x" warning first).
 # Fix both right after every mim install:
 uv pip uninstall opencv-python
-uv pip install --reinstall opencv-python-headless
+uv pip install --reinstall --no-deps opencv-python-headless
 uv pip install "numpy<2.0"
 ```
 
