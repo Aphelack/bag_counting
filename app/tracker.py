@@ -3,10 +3,23 @@
 Greedy IoU tracker with simple constant-velocity prediction, plus a
 counting-zone crossing rule: a rectangular zone instead of a single line,
 since a zone tolerates a frame or two of missed detection right at the
-boundary, where a thin line would just miss the count entirely. Each track
-is counted at most once — the first time its centroid enters the zone —
-which is what prevents double-counting the same bag as it drifts across
-several frames.
+boundary, where a thin line would just miss the count entirely.
+
+Counting fires on zone **exit**, not entry, signed by the direction of
+travel at that exit — not on first entry. This matters for a case seen in
+practice: a bag gets pushed backward into the zone by a momentary belt
+reversal, the belt stops with the bag sitting inside the zone, then the
+belt resumes forward and the bag continues on and exits normally. Counting
+on *entry* would flag that backward arrival as a reverse crossing (-1) and
+then never count anything else for that track (once counted, always
+counted), permanently losing the fact that the bag actually completed a
+normal forward pass. Counting on *exit* sidesteps this entirely: entering
+the zone doesn't fire anything by itself, so the backward arrival is a
+non-event, and the eventual forward exit is what fires — a clean, single
++1, matching the one bag that actually passed through. A track can cross
+in and out of the zone multiple times over its life (e.g. a genuine
+re-pass after already completing one), and each exit is independently
+signed — a real re-pass in reverse correctly nets back out an earlier +1.
 
 Prediction matters even for slow, smooth belt motion: without it, a track
 that goes a few frames without a matching detection (a brief occlusion, a
@@ -18,18 +31,21 @@ unmatched track's box by its last known velocity every frame keeps it near
 where the bag actually is, so matching survives short gaps instead of
 silently double-counting.
 
-Direction-aware counting handles a case prediction alone doesn't: an
-object that briefly reverses on the belt (jostled backwards, then forward
-again) and *does* break tracking mid-reversal — a sudden direction change
-is exactly what a constant-velocity predictor gets wrong, so a new track
-can legitimately spawn there. Rather than trying to perfectly stitch that
-reversal into one track, each zone-crossing is signed by its direction
-relative to a reference direction (established from the very first
-crossing, majority-vote in spirit — the line's actual forward direction
-isn't known in advance, so the first real crossing defines it): +1 with
-the flow, -1 against it. A bag that goes forward/back/forward across three
-broken track segments nets 1 + (-1) + 1 = 1, matching the one physical bag
-that actually crossed, instead of 3.
+Direction-aware signing handles a case prediction alone doesn't: an object
+that briefly reverses on the belt and *does* break tracking mid-reversal —
+a sudden direction change is exactly what a constant-velocity predictor
+gets wrong, so a new track can legitimately spawn there. Rather than
+trying to perfectly stitch a reversal into one track, each zone exit is
+signed by its direction relative to a reference direction (established
+from the very first exit ever recorded, since the belt's actual forward
+direction isn't known in advance): +1 with the flow, -1 against it. A bag
+that crosses forward/back/forward across broken track segments nets
+1 + (-1) + 1 = 1, matching the one physical bag that actually crossed. A
+track that's still inside the zone when it's dropped (lost for longer than
+`max_age`, e.g. it left the frame or got permanently occluded) is treated
+as exiting at that point too, using its last known velocity — otherwise a
+track that never gets a clean "exit while still tracked" moment would
+silently lose its crossing altogether.
 
 The default zone is tuned to this project's fixed camera angle
 (storage/input/input.mp4: a diagonal conveyor belt running from the
@@ -90,7 +106,7 @@ class Track:
     bbox: Bbox
     velocity: Vector = (0.0, 0.0)
     age_since_seen: int = 0
-    counted: bool = False
+    in_zone: bool = False
 
 
 class BagCounter:
@@ -113,8 +129,8 @@ class BagCounter:
         self._max_age = max_age
         self._zone_fractional = zone_fractional
         self._zone: Bbox | None = None
-        # Set from the first zone-crossing's velocity — that crossing
-        # defines "forward" for every crossing after it.
+        # Set from the first zone exit's velocity — that exit defines
+        # "forward" for every crossing after it.
         self._reference_direction: Vector | None = None
 
     def set_frame_size(self, width: int, height: int) -> None:
@@ -168,37 +184,70 @@ class BagCounter:
             if track_id not in matched_tracks:
                 track.bbox = predicted[track_id]
                 track.age_since_seen += 1
-        self._tracks = {tid: t for tid, t in self._tracks.items() if t.age_since_seen <= self._max_age}
-
-        for det_idx, det in enumerate(detections):
-            if det_idx not in matched_detections:
-                self._tracks[self._next_id] = Track(id=self._next_id, bbox=det.bbox)
-                self._next_id += 1
 
         self.last_forward_crossings = 0
         self.last_reverse_crossings = 0
 
+        # Zone exit detection: fire a signed crossing exactly when a track
+        # transitions from inside the zone to outside it. Tracks that age
+        # out while still inside the zone are treated the same way, using
+        # their last known velocity, so a track that's lost mid-zone
+        # (rather than cleanly tracked back out) doesn't silently drop its
+        # crossing.
+        to_drop = []
+        for track_id, track in self._tracks.items():
+            now_in_zone = in_zone(centroid(track.bbox), self._zone)
+            if track.in_zone and not now_in_zone:
+                self._record_crossing(track.velocity)
+            track.in_zone = now_in_zone
+
+            if track.age_since_seen > self._max_age:
+                to_drop.append(track_id)
+
+        for track_id in to_drop:
+            track = self._tracks.pop(track_id)
+            if track.in_zone:
+                self._record_crossing(track.velocity)
+
+        for det_idx, det in enumerate(detections):
+            if det_idx not in matched_detections:
+                new_track = Track(id=self._next_id, bbox=det.bbox)
+                new_track.in_zone = in_zone(centroid(det.bbox), self._zone)
+                self._tracks[self._next_id] = new_track
+                self._next_id += 1
+
+        return self.total
+
+    def _record_crossing(self, velocity: Vector) -> None:
+        if velocity == (0.0, 0.0):
+            # No direction signal (e.g. dropped before ever being matched
+            # a second time) — nothing sensible to sign, skip.
+            return
+
+        if self._reference_direction is None:
+            self._reference_direction = velocity
+            forward = True
+        else:
+            forward = dot(velocity, self._reference_direction) >= 0
+
+        if forward:
+            self.total += 1
+            self.forward_count += 1
+            self.last_forward_crossings += 1
+        else:
+            self.total -= 1
+            self.reverse_count += 1
+            self.last_reverse_crossings += 1
+
+    def finalize(self) -> int:
+        """Call once after the video ends. A track still inside the zone
+        at that point (video simply ran out of frames before it exited or
+        aged out) gets one last chance to register its crossing, using its
+        last known velocity — otherwise that crossing is silently lost
+        rather than genuinely absent.
+        """
         for track in self._tracks.values():
-            if track.counted or not in_zone(centroid(track.bbox), self._zone):
-                continue
-            if track.velocity == (0.0, 0.0):
-                # No direction signal yet (just spawned this frame) — wait
-                # for the next matched update rather than guess.
-                continue
-
-            track.counted = True
-            if self._reference_direction is None:
-                self._reference_direction = track.velocity
-                self.total += 1
-                self.forward_count += 1
-                self.last_forward_crossings += 1
-            elif dot(track.velocity, self._reference_direction) >= 0:
-                self.total += 1
-                self.forward_count += 1
-                self.last_forward_crossings += 1
-            else:
-                self.total -= 1
-                self.reverse_count += 1
-                self.last_reverse_crossings += 1
-
+            if track.in_zone:
+                self._record_crossing(track.velocity)
+                track.in_zone = False  # don't fire again if called twice
         return self.total

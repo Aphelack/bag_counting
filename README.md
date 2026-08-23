@@ -177,33 +177,71 @@ detection resumes, looks like a brand new object, and silently
 double-counts the same bag. This cross-frame object continuity is exactly
 what the assignment calls out as a top evaluation criterion.
 
-**2. Counting-zone crossing** — a rectangular zone (not a single line)
-placed over a clean stretch of belt: past the dark tunnel opening where
-bags first appear (avoids partial-occlusion misses right as an object
-emerges) and before the pile where bags accumulate at the bottom-left
-(avoids double-counting overlapping bags there). A zone tolerates a
-missed detection or two right at the boundary, where a thin line would
-just lose the count outright. Each track is counted **at most once**, the
-first time its centroid enters the zone, keyed by track ID — this is what
-guarantees a given physical bag can't be counted twice through normal
-belt motion. The zone's default position (`DEFAULT_ZONE_FRACTIONAL` in
-`tracker.py`) is tuned to `input.mp4`'s fixed camera angle.
+**2. Counting-zone crossing, counted on exit** — a rectangular zone (not
+a single line) placed over a clean stretch of belt: past the dark tunnel
+opening where bags first appear (avoids partial-occlusion misses right as
+an object emerges) and before the pile where bags accumulate at the
+bottom-left (avoids double-counting overlapping bags there). A zone
+tolerates a missed detection or two right at the boundary, where a thin
+line would just lose the count outright.
+
+A crossing fires when a track's centroid **exits** the zone (transitions
+from inside to outside), not when it enters — signed by the direction of
+travel at that exit. This was originally entry-based (count the first time
+a track's centroid enters the zone) and got flipped after a bug report
+from real footage: a bag got pushed backward into the zone by a momentary
+belt reversal, the belt stopped with the bag sitting inside the zone, then
+the belt resumed forward and the bag continued on and exited normally.
+Entry-based counting flagged the backward arrival as a reverse crossing
+(`-1`) and then, because a track was only ever counted once, permanently
+lost the fact that the same bag went on to complete an ordinary forward
+pass — net effect, one real bag contributed `-1` to the total instead of
+the `+1` it should have. Counting on exit instead of entry fixes this at
+the root: entering the zone doesn't fire anything by itself, so the
+backward arrival is a non-event, and only the eventual forward exit fires
+— one clean `+1`, matching the one bag that actually passed through. A
+track can cross the zone boundary multiple times over its life (e.g. a
+bag that completes a pass and is later genuinely pushed back through) and
+each exit is independently signed, so a real re-pass in reverse correctly
+nets an earlier `+1` back out to `0`.
+
+Two things keep this exit rule from silently losing a crossing instead of
+just mis-signing one:
+- A track that's lost (occlusion, or it left the frame) while its last
+  known position was still inside the zone is treated as exiting at the
+  moment it's dropped, signed by its last known velocity — otherwise a
+  track that never gets a clean "exit while still tracked" moment would
+  vanish without ever registering.
+- `BagCounter.finalize()`, called once after the video ends: a bag that's
+  still inside the zone when the video simply runs out of frames (no more
+  frames left for it to exit or age out naturally) gets the same
+  last-known-velocity treatment, rather than being silently dropped.
+
+Each track is still counted **at most once per zone visit** (entering,
+dwelling, and eventually exiting counts as a single visit — the `in_zone`
+transition is what fires the count, not repeated per-frame checks while
+inside), keyed by track ID — this is what guarantees a given physical bag
+can't be counted many times over for one pass through. The zone's default
+position (`DEFAULT_ZONE_FRACTIONAL` in `tracker.py`) is tuned to
+`input.mp4`'s fixed camera angle.
 
 **3. Direction-aware counting** — handles a case the first two points
 don't fully cover: a bag that gets jostled backward and then forward again
-on the belt. A sudden reversal is exactly what a constant-velocity
-predictor gets wrong, so tracking can legitimately break mid-reversal, and
-the same physical bag can end up as several separate track segments. Each
-of those tracks independently crosses the zone and would each count as a
-"new" bag with plain zone-crossing counting. Rather than trying to
+on the belt *and breaks tracking while doing it* (as opposed to the
+single-continuous-track reversal case above, which exit-based counting
+already handles cleanly). A sudden reversal is exactly what a
+constant-velocity predictor gets wrong, so tracking can legitimately break
+mid-reversal, and the same physical bag can end up as several separate
+track segments, each with its own zone exit. Rather than trying to
 perfectly stitch a reversal back into one track (hard, and fragile), every
-zone-crossing is **signed** by its direction relative to a reference
-direction — set from the very first crossing ever recorded, since the
-belt's actual forward direction isn't known in advance: `+1` with the
-flow, `-1` against it. A bag that crosses forward → back → forward nets
-`1 + (-1) + 1 = 1`, matching the one bag that actually passed, instead of
-counting it 3 times. `BagCounter.forward_count` / `.reverse_count` expose
-the raw tallies for visibility into how often this triggers.
+zone exit is **signed** by its direction relative to a reference
+direction — set from the very first exit ever recorded, since the belt's
+actual forward direction isn't known in advance: `+1` with the flow, `-1`
+against it. A bag that crosses forward → back → forward across broken
+track segments nets `1 + (-1) + 1 = 1`, matching the one bag that actually
+passed, instead of counting it 3 times. `BagCounter.forward_count` /
+`.reverse_count` expose the raw tallies for visibility into how often this
+triggers.
 
 This whole approach (detector + lightweight IoU tracker + counting rule,
 all custom, versus pulling in a heavier off-the-shelf tracker like
@@ -347,6 +385,7 @@ A condensed list of the non-obvious choices and why, for quick reference:
 | SAM 3 for bootstrap labeling | No existing labeled dataset for this belt; hand-labeling wasn't worth the time budget; a tuned text prompt against this footage gave usable auto-labels |
 | Custom IoU tracker, not ByteTrack/DeepSORT | Scene has at most a couple of simultaneous objects and smooth motion — a full MOT tracker's extra machinery wasn't worth the dependency weight here |
 | Counting **zone**, not a line | Tolerates a missed detection or two at the boundary; a single line loses the count outright on a miss |
+| Count on zone **exit**, not entry | A bag pushed backward into the zone, stopped, then resumed forward and exited normally was mis-flagged `-1` on entry and — since a track only ever counted once — never got the compensating `+1` when it later exited correctly. Counting on exit instead fires exactly once, correctly signed, for that case |
 | Constant-velocity prediction on unmatched tracks | Without it, a few missed frames breaks IoU continuity and silently double-counts the same bag |
 | Direction-signed zone crossings | Handles bags jostled backward-then-forward without needing to perfectly stitch a broken track back together |
 | `asyncio.to_thread` background task, not Celery/RQ | Matches the assignment's actual scale (one video at a time); avoids a broker + extra containers for no real benefit yet |
@@ -364,9 +403,13 @@ A condensed list of the non-obvious choices and why, for quick reference:
 - The IoU tracker has no re-identification: if a bag is fully occluded for
   longer than `max_age` frames (default 10) and reappears far from its
   predicted position, it's treated as a new object. Direction-aware
-  counting compensates for the specific reversal case, but a long
-  occlusion elsewhere on the belt could still under/over-count in theory —
-  not observed in testing against `input.mp4`, but worth flagging.
+  counting handles the reversal case this causes, and exit-based counting
+  plus `finalize()` handle a track being lost or the video ending while a
+  bag is still inside the zone — but a long occlusion with a large
+  position jump elsewhere on the belt could in theory still misattribute
+  a crossing's direction if the jump itself crosses the zone boundary in a
+  way that doesn't match the bag's real path. Not observed in testing
+  against `input.mp4`, but worth flagging.
 - Detection-quality anomalies (confidence collapse, implausible count
   spikes) aren't implemented — see [Anomaly monitoring](#anomaly-monitoring).
   Only reverse-direction and detection-gap are.

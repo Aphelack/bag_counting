@@ -91,6 +91,11 @@ def run(job_id: str, input_path: Path, output_path: Path, detector: BagDetector 
         cap.release()
         writer.release()
 
+    # A bag still inside the counting zone when the video simply ends
+    # (ran out of frames before it exited or aged out) would otherwise
+    # silently lose its crossing — see BagCounter.finalize().
+    counter.finalize()
+
     job_store.update(
         job_id,
         status=JobStatus.COMPLETED,
