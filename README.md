@@ -67,8 +67,8 @@ app/
 
 models/           detector config + trained checkpoint (committed)
 storage/          host volume: input/output videos + job records
-experiments/      SAM 3 labeling (separate uv env, see its README)
-training/         MMDetection training pipeline (separate uv env, see its README)
+experiments/      SAM 3 labeling (separate uv env, see its RE[text](experiments/README.md)ADME)
+training/         MMDetection training pipeline (separate uv env, see its [README](training/README.md))
 ```
 
 Each job runs as a background task (`asyncio.create_task` +
@@ -80,7 +80,7 @@ every API read is just a read of that state.
 **Detection** — RTMDet-tiny, fine-tuned on one class (`bag`). No existing
 labeled dataset, so `experiments/scripts/label_with_sam3.py`
 bootstrap-labels one from `input.mp4` with SAM 3 (see
-`experiments/README.md` for the prompt-tuning story). Checkpoint is
+[`experiments/README.md`](experiments/README.md) for the prompt-tuning story). Checkpoint is
 committed to the repo so the project runs standalone.
 
 **Counting** — greedy IoU tracker with constant-velocity prediction for
