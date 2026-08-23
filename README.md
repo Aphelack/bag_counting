@@ -67,8 +67,8 @@ app/
 
 models/           detector config + trained checkpoint (committed)
 storage/          host volume: input/output videos + job records
-experiments/      SAM 3 labeling (separate uv env, see its RE[text](experiments/README.md)ADME)
-training/         MMDetection training pipeline (separate uv env, see its [README](training/README.md))
+experiments/      SAM 3 labeling (separate uv env, see its experiments/README.md)
+training/         MMDetection training pipeline (separate uv env, see its training/README.md)
 ```
 
 Each job runs as a background task (`asyncio.create_task` +
