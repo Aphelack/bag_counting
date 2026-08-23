@@ -1,9 +1,8 @@
 # Training: RTMDet bag detector
 
-Bootstrap-label a dataset from `input.mp4` with SAM 3, fine-tune
-RTMDet-tiny on it, validate the checkpoint, deploy it to the app.
-Everything here runs on a CUDA host — this was written on a machine with
-no GPU, nothing in this directory runs there.
+Label a dataset from `input.mp4` with SAM 3, fine-tune RTMDet-tiny,
+validate, deploy to the app. Runs on a CUDA host — written on a machine
+with no GPU, nothing here runs there.
 
 ## 1. Setup
 
@@ -28,37 +27,28 @@ uv pip install --reinstall --no-deps opencv-python-headless
 uv pip install "numpy<2.0"
 ```
 
-> **Every time you run `uv sync` after this, redo the four lines below it
-> again too.** `mmengine`/`mmcv`/`mmdet` are installed via `mim`, not
-> declared in `pyproject.toml`, so they're invisible to uv's lockfile —
-> `uv sync` treats them as extraneous and silently removes them, which
-> shows up later as `ModuleNotFoundError: No module named 'mmdet'` with no
-> obvious cause. `opencv-python` and `numpy>=2.0` creeping back in after a
-> fresh `mim install` need the same cleanup pass each time too.
+> Every time you run `uv sync` after this, redo the three `uv pip` lines
+> too. `mmengine`/`mmcv`/`mmdet` are installed via `mim`, invisible to
+> uv's lockfile, so `uv sync` treats them as extraneous and removes them
+> (`ModuleNotFoundError: No module named 'mmdet'`). `opencv-python` and
+> `numpy>=2.0` creep back the same way.
 
-`torch`/`torchvision` are pinned to 2.1.2/cu121, not left open —
-OpenMMLab's prebuilt `mmcv` wheels only go up to around torch 2.7/cu128
-(mmcv development has slowed, see `../experiments/README.md`). An unpinned
-`torch` resolves to the latest, `mim install mmcv` finds no matching
-wheel, and falls back to building from source — which fails separately
-because its legacy `setup.py` needs `pkg_resources`, removed from
-`setuptools` 81+ (hence the `setuptools<81` pin). The CUDA 12.1 *runtime*
-wheel works fine on newer drivers (forward compatibility), so this
-shouldn't need a matching CUDA *toolkit* install. If `mim install mmcv`
-still can't find a wheel, check OpenMMLab's current supported matrix and
-adjust the pin here, in `[tool.uv.sources]`, and in the `mim install`
-command's `mmcv` constraint together.
+`torch`/`torchvision` are pinned to 2.1.2/cu121 — OpenMMLab's prebuilt
+`mmcv` wheels only go up to ~torch 2.7/cu128. Unpinned torch → `mim
+install mmcv` finds no wheel → falls back to building from source → fails
+separately (`pkg_resources` removed from `setuptools` 81+, hence
+`setuptools<81`). If `mim install mmcv` can't find a wheel, check
+OpenMMLab's current matrix and adjust the pin in `pyproject.toml`,
+`[tool.uv.sources]`, and the `mim install` command together.
 
-Labeling (step 2) also needs the `sam3` package and its assets, in
-whichever environment you're already running
-`../experiments/notebooks/01_sam3_segmentation_test.ipynb` in:
+Labeling also needs the `sam3` package, in whichever env you're running
+`../experiments/notebooks/01_sam3_segmentation_test.ipynb`:
 
 ```bash
 uv pip install git+https://github.com/facebookresearch/sam3.git
-# checkpoint_path / bpe_path from the notebook — same files, reused here.
 ```
 
-## 2. Label a dataset from input.mp4
+## 2. Label a dataset
 
 ```bash
 uv run --project ../experiments python ../experiments/scripts/label_with_sam3.py \
@@ -70,17 +60,9 @@ uv run --project ../experiments python ../experiments/scripts/label_with_sam3.py
     --confidence-threshold 0.75
 ```
 
-Samples one frame per second (`--stride 25` @ 25fps), runs SAM 3 with the
-prompt `"A white soft pillow positioned on an industrial roller conveyor
-system."` (tuning notes in `experiments/README.md`), derives boxes from
-the returned masks, and writes a COCO dataset split chronologically into
-train/val (last 15% held out — avoids near-duplicate adjacent frames
-leaking across the split).
-
-**Check `data/bags_coco/previews/` before training** — every 20th labeled
-frame is saved there with boxes drawn. If quality is poor on a subset of
-frames, delete those images and their annotations from the COCO JSON
-rather than re-running the whole pipeline.
+Check `data/bags_coco/previews/` before training (every 20th labeled
+frame, boxes drawn). Bad frames → delete the image + its annotation from
+the COCO JSON rather than re-running the pipeline.
 
 ## 3. Train
 
@@ -88,36 +70,15 @@ rather than re-running the whole pipeline.
 uv run python scripts/train.py configs/rtmdet_bag.py
 ```
 
-Fine-tunes COCO-pretrained RTMDet-tiny (`load_from` in the config) for 50
-epochs, single class (`bag`). Checkpoints land in `work_dirs/rtmdet_bag/`.
-Adjust `configs/rtmdet_bag.py` (batch size, epochs, LR) if the labeled
-dataset ends up much bigger/smaller than expected — comments in the
-config explain what was tuned down from the base 8-GPU schedule.
+50 epochs from COCO-pretrained weights. Checkpoints in
+`work_dirs/rtmdet_bag/`; `best_coco_bbox_mAP_epoch_*.pth` is the one to
+use, not necessarily the last epoch. mAP stuck near-zero → labeling
+problem, check the previews first. High val mAP isn't proof of quality —
+train/val labels both come from SAM3, so it mostly measures agreement
+with SAM3, not ground truth (`notebooks/01_inspect_predictions.ipynb` is
+the real check, step 5).
 
-**Controlling training quality:**
-
-- Every `val_interval` epochs (5, by default) the console prints
-  `coco/bbox_mAP`, `coco/bbox_mAP_50`, etc. on the held-out val split —
-  the main signal to watch.
-- Full logs in `work_dirs/rtmdet_bag/<timestamp>/`: `*.log` for the
-  human-readable text log, `vis_data/scalars.json` for the same data as
-  newline-delimited JSON.
-- `default_hooks.checkpoint` uses `save_best='auto'` —
-  `work_dirs/rtmdet_bag/best_coco_bbox_mAP_epoch_*.pth` is the checkpoint
-  to use in step 4, not necessarily the last epoch's.
-- mAP stuck near-zero past epoch ~15-20 → labeling problem, not a
-  training one. Check step 2's `previews/` before touching hyperparameters.
-- Loss curve noisy or diverging → lower `optim_wrapper.optimizer.lr` and
-  restart (`--resume` picks up from the last checkpoint).
-
-**A high val mAP here doesn't prove the detector is good** — train and val
-labels both come from the same SAM3 pass, so the metric mostly measures
-how well RTMDet reproduced SAM3's boxes, including SAM3's own labeling
-mistakes. Treat it as a convergence signal, not a real-world accuracy
-number — `notebooks/01_inspect_predictions.ipynb` (step 5) is the actual
-check.
-
-## 4. Validate the trained detector
+## 4. Validate
 
 ```bash
 uv run python scripts/infer.py \
@@ -127,34 +88,25 @@ uv run python scripts/infer.py \
     --out ../storage/output/rtmdet_preview.mp4
 ```
 
-Draws per-frame detections on the full video, prints detection-count
-stats (mean/min/max per frame, % of frames with zero detections). Does
-**not** do cross-frame tracking or belt counting — that's
-`../app/tracker.py`; this script validates the detector in isolation.
+Detector only, no tracking/counting (that's `../app/tracker.py`).
 
-## 5. Check predictions on frames the model never saw
+## 5. Check on unseen frames
 
 ```bash
-uv sync   # picks up jupyter/matplotlib, added for this notebook
+uv sync
 uv run python -m ipykernel install --user --name bag-counting-training --display-name "bag-counting-training"
 ```
 
-Open `notebooks/01_inspect_predictions.ipynb`, kernel
-`bag-counting-training`. Samples frames offset from the labeling
-`--stride` grid (none were in train or val), runs the trained checkpoint
-on them, draws the boxes. This is the actual generalization check, versus
-just agreeing with SAM3's own labels (see the mAP caveat in step 3).
+Open `notebooks/01_inspect_predictions.ipynb`. Samples frames offset from
+the labeling stride (never in train or val), draws predictions — the
+actual generalization check.
 
-## 6. Deploy the checkpoint to the app
+## 6. Deploy to the app
 
 ```bash
 ./scripts/deploy_checkpoint.sh
 git push
 ```
 
-Copies the best checkpoint (by modification time) and its config into
-`../models/`, commits if anything changed — a no-op if re-run with
-nothing new. Doesn't push on its own. This is what makes
-`docker compose up --build` produce real detections instead of the stub
-0-bags fallback — see the root `README.md`'s "Detection: MMDetection /
-RTMDet" section for how the running service picks these files up.
+Copies the best checkpoint + config into `../models/`, commits if
+changed. Doesn't push itself.

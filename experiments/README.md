@@ -15,50 +15,17 @@ uv run python -m ipykernel install --user --name bag-counting-experiments --disp
 Then open `notebooks/` in Jupyter/VS Code and select the
 `bag-counting-experiments` kernel.
 
-SAM 3 itself is not a trivial install. The official Meta weights require
-Hugging Face to approve access; I used a mirrored checkpoint instead, which
-still needed some dependency wrangling — the notebook may not run clean on
-the first try.
-
 ## Notebooks
+  Поставить sam3 было не просто. Официальная модель от meta требует разрешения от компании на huggingface. Скачал веса из зеркала, но пришлось повозиться с зависимости, возможно ноутбук сразу не запуститься. 
+sam3 может работает по текстовому промту. Baseline промпт bag или package были недостаточно эффективны. Оказывается мешки больше похожи на подушки для модели, чем на мешки
+Пример
+![alt text](<Screenshot from 2026-08-23 03-54-26.png>)
+  Тут захватывается мешки лежащие на полу. Как я понял, в задании нужно их игнорировать. Простым понижением trethhold это не починить. Поэтому подбирался другой промпт. 
+![alt text](<Screenshot from 2026-08-23 03-56-15.png>)
+  Вот этот достаточно хорошо задлеял мешки на конвейере и лежащие на полу. Самый высокий confidence у мешков на полу за все кадры 0.7. А на конвейере >0.9. 
+![alt text](<Screenshot from 2026-08-23 03-55-55.png>)
 
-- `01_sam3_segmentation_test.ipynb` — prompt tuning for the labeling step.
-
-SAM 3 segments from a text prompt. The obvious prompts didn't work:
-
-**Baseline prompt `"bags"`** — weak and inconsistent. On some frames it
-barely clears 0.2–0.3 confidence on the actual belt bag:
-
-![Baseline "bags" prompt: low, inconsistent confidence](<Screenshot from 2026-08-23 03-54-26.png>)
-
-The model responds much better to a description of *shape and material*
-than to the word "bag" — these sacks read to SAM 3 as pillows, not bags.
-Rewording the prompt to **`"A white soft pillow positioned on an
-industrial roller conveyor system."`** fixed the belt bag reliably
-(consistently >0.9 on the same frame):
-
-![Tuned prompt: >0.9 confidence on the belt bag](<Screenshot from 2026-08-23 03-55-55.png>)
-
-That doesn't solve everything: the assignment only cares about bags
-actually on the conveyor, but there's a pile of bags on the floor in
-frame, and any prompt broad enough to catch "bag-shaped object" catches
-those too. Lowering the threshold doesn't fix it — it makes the floor
-bags worse, not better. Confidence turned out to be a good separator on
-its own: across every frame I checked, floor bags topped out around 0.7,
-belt bags stayed above 0.9:
-
-![Same tuned prompt, floor pile: confidence caps around 0.7](<Screenshot from 2026-08-23 03-56-15.png>)
-
-I used **`confidence_threshold=0.75`** to label the dataset — high enough
-to exclude the floor pile, low enough to keep every real belt bag.
-
-Training on the resulting labels worked on the first attempt, no
-hyperparameter iteration needed: 50 epochs, ~5 minutes on an A100 40GB.
-
-⚠️ At one point this notebook had a hardcoded HF token in plain text —
-if you're reusing history from this repo, revoke that token at
-huggingface.co/settings/tokens and read it from an environment variable
-instead.
+  Взял threthhold 0.75 и разметил датасет для обучения. С обучением проблем не было - все обучилось с первого раза за 5 минут (использовалась A100 на 40gb).
 
 ## Scripts
 
