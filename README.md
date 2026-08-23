@@ -4,6 +4,9 @@ FastAPI service that detects bags on a conveyor belt (MMDetection/RTMDet),
 tracks and counts them across frames, flags anomalies, and serves the
 annotated video — via REST API and a web UI.
 
+📹 **[Demo recording](<Screencast%20from%202026-08-23%2003-38-53.webm>)** —
+build, run, upload, process, download, in one take.
+
 ## Contents
 
 [Quick start](#quick-start) · [Using the service](#using-the-service) ·
@@ -19,7 +22,7 @@ Requires Docker Compose v2, and an NVIDIA GPU + `nvidia-container-toolkit`
 for real detections (runs without one too — every job just reports 0 bags).
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/Aphelack/bag_counting.git
 cd bag_counting
 docker compose up --build
 ```

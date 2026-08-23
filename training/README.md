@@ -1,9 +1,9 @@
 # Training: RTMDet bag detector
 
-Builds the MMDetection-based bag detector: bootstrap-label a dataset from
-`input.mp4` with SAM 3, fine-tune RTMDet-tiny on it, then validate the
-checkpoint. Everything here runs on a CUDA host — nothing in this directory
-runs on the dev machine this was written on (no GPU there).
+Bootstrap-label a dataset from `input.mp4` with SAM 3, fine-tune
+RTMDet-tiny on it, validate the checkpoint, deploy it to the app.
+Everything here runs on a CUDA host — this was written on a machine with
+no GPU, nothing in this directory runs there.
 
 ## 1. Setup
 
@@ -36,24 +36,22 @@ uv pip install "numpy<2.0"
 > obvious cause. `opencv-python` and `numpy>=2.0` creeping back in after a
 > fresh `mim install` need the same cleanup pass each time too.
 
-`torch`/`torchvision` are pinned to 2.1.2/cu121 in `pyproject.toml` (not left
-open) because OpenMMLab's prebuilt `mmcv` wheels only go up to around torch
-2.7/cu128 as of writing — mmcv development has slowed a lot (see
-`../experiments/README.md`'s MMDetection maintenance note). An unpinned
-`torch` resolves to whatever's newest, `mim install mmcv` can't find a
-matching wheel for that, and falls back to building mmcv from source, which
-fails for unrelated reasons (its legacy `setup.py` needs `pkg_resources`,
-removed from `setuptools` 81+ — hence the `setuptools<81` pin too). A CUDA
-12.1 *runtime* wheel works fine on newer GPU drivers (driver forward
-compatibility), so this pin shouldn't need a matching CUDA *toolkit*
-install — but if `mim install mmcv` still can't find a wheel, check
-OpenMMLab's current supported matrix and adjust the pin here, in
-`[tool.uv.sources]` below, and in the `mim install` command's `mmcv`
-constraint together.
+`torch`/`torchvision` are pinned to 2.1.2/cu121, not left open —
+OpenMMLab's prebuilt `mmcv` wheels only go up to around torch 2.7/cu128
+(mmcv development has slowed, see `../experiments/README.md`). An unpinned
+`torch` resolves to the latest, `mim install mmcv` finds no matching
+wheel, and falls back to building from source — which fails separately
+because its legacy `setup.py` needs `pkg_resources`, removed from
+`setuptools` 81+ (hence the `setuptools<81` pin). The CUDA 12.1 *runtime*
+wheel works fine on newer drivers (forward compatibility), so this
+shouldn't need a matching CUDA *toolkit* install. If `mim install mmcv`
+still can't find a wheel, check OpenMMLab's current supported matrix and
+adjust the pin here, in `[tool.uv.sources]`, and in the `mim install`
+command's `mmcv` constraint together.
 
-Labeling (step 2) also needs the `sam3` package and its assets, in whichever
-environment you're already running `../experiments/notebooks/01_sam3_segmentation_test.ipynb`
-in:
+Labeling (step 2) also needs the `sam3` package and its assets, in
+whichever environment you're already running
+`../experiments/notebooks/01_sam3_segmentation_test.ipynb` in:
 
 ```bash
 uv pip install git+https://github.com/facebookresearch/sam3.git
@@ -69,23 +67,20 @@ uv run --project ../experiments python ../experiments/scripts/label_with_sam3.py
     --checkpoint-path /path/to/sam3.pt \
     --bpe-path /path/to/bpe_simple_vocab_16e6.txt.gz \
     --stride 25 \
-    --confidence-threshold 0.3
+    --confidence-threshold 0.75
 ```
 
-This samples one frame per second (`--stride 25` @ 25fps), runs SAM 3 with
-the prompt `"A white soft pillow positioned on an industrial roller conveyor
-system."` (the one that worked in testing — override with `--prompt` to try
-others), derives bounding boxes from the returned masks, and writes a COCO
-dataset split chronologically into train/val (last 15% of frames held out,
-to avoid near-duplicate frames leaking between splits).
+Samples one frame per second (`--stride 25` @ 25fps), runs SAM 3 with the
+prompt `"A white soft pillow positioned on an industrial roller conveyor
+system."` (tuning notes in `experiments/README.md`), derives boxes from
+the returned masks, and writes a COCO dataset split chronologically into
+train/val (last 15% held out — avoids near-duplicate adjacent frames
+leaking across the split).
 
 **Check `data/bags_coco/previews/` before training** — every 20th labeled
-frame is saved there with boxes drawn, so you can eyeball recall/false
-positives (e.g. the "clothes on the floor" confusion from earlier testing)
-before spending GPU time training on bad labels. If quality is poor for a
-subset of frames, the cheapest fix is usually deleting those images and
-their annotations from the COCO JSON rather than re-running the whole
-pipeline.
+frame is saved there with boxes drawn. If quality is poor on a subset of
+frames, delete those images and their annotations from the COCO JSON
+rather than re-running the whole pipeline.
 
 ## 3. Train
 
@@ -93,38 +88,34 @@ pipeline.
 uv run python scripts/train.py configs/rtmdet_bag.py
 ```
 
-Fine-tunes from COCO-pretrained RTMDet-tiny weights (`load_from` in the
-config) for 50 epochs, single class (`bag`). Checkpoints land in
-`work_dirs/rtmdet_bag/`. Adjust `configs/rtmdet_bag.py` (batch size, epochs,
-LR) if the labeled dataset ends up much bigger/smaller than expected —
-comments in the config explain what was tuned down from the base 8-GPU
-schedule and why.
+Fine-tunes COCO-pretrained RTMDet-tiny (`load_from` in the config) for 50
+epochs, single class (`bag`). Checkpoints land in `work_dirs/rtmdet_bag/`.
+Adjust `configs/rtmdet_bag.py` (batch size, epochs, LR) if the labeled
+dataset ends up much bigger/smaller than expected — comments in the
+config explain what was tuned down from the base 8-GPU schedule.
 
-**Controlling training quality, while it runs or after:**
+**Controlling training quality:**
 
 - Every `val_interval` epochs (5, by default) the console prints
-  `coco/bbox_mAP`, `coco/bbox_mAP_50`, etc. on the held-out val split — that's
+  `coco/bbox_mAP`, `coco/bbox_mAP_50`, etc. on the held-out val split —
   the main signal to watch.
-- Full logs land in `work_dirs/rtmdet_bag/<timestamp>/` — `*.log` has the
-  human-readable text log (loss per iteration, LR, ETA); `vis_data/scalars.json`
-  has the same as newline-delimited JSON if you want to plot loss/mAP curves.
-- `default_hooks.checkpoint` uses `save_best='auto'`, so
-  `work_dirs/rtmdet_bag/best_coco_bbox_mAP_epoch_*.pth` is the checkpoint to
-  use in step 4 — not necessarily the last epoch's.
-- If mAP stays near-zero past epoch ~15-20: that's usually a labeling
-  problem, not a training one — go back to step 2's `previews/` and check
-  recall/false-positive rate before touching hyperparameters.
-- If the loss curve is noisy or diverges: lower `optim_wrapper.optimizer.lr`
-  in the config and restart (`--resume` picks up from the last checkpoint
-  instead of starting over).
+- Full logs in `work_dirs/rtmdet_bag/<timestamp>/`: `*.log` for the
+  human-readable text log, `vis_data/scalars.json` for the same data as
+  newline-delimited JSON.
+- `default_hooks.checkpoint` uses `save_best='auto'` —
+  `work_dirs/rtmdet_bag/best_coco_bbox_mAP_epoch_*.pth` is the checkpoint
+  to use in step 4, not necessarily the last epoch's.
+- mAP stuck near-zero past epoch ~15-20 → labeling problem, not a
+  training one. Check step 2's `previews/` before touching hyperparameters.
+- Loss curve noisy or diverging → lower `optim_wrapper.optimizer.lr` and
+  restart (`--resume` picks up from the last checkpoint).
 
-**A very high val mAP here is not proof the detector is good** — train and
-val labels both came from the same SAM3 pass, so this metric measures how
-well RTMDet reproduced SAM3's boxes, including any systematic labeling
-mistakes SAM3 made (e.g. the floor bag-pile / laundry confusion from
-earlier testing). Treat it as a training-convergence signal, not a
-real-world accuracy number — `notebooks/01_inspect_predictions.ipynb`
-(step 5 below) is the actual check.
+**A high val mAP here doesn't prove the detector is good** — train and val
+labels both come from the same SAM3 pass, so the metric mostly measures
+how well RTMDet reproduced SAM3's boxes, including SAM3's own labeling
+mistakes. Treat it as a convergence signal, not a real-world accuracy
+number — `notebooks/01_inspect_predictions.ipynb` (step 5) is the actual
+check.
 
 ## 4. Validate the trained detector
 
@@ -136,25 +127,23 @@ uv run python scripts/infer.py \
     --out ../storage/output/rtmdet_preview.mp4
 ```
 
-Draws per-frame detections on the full video and prints detection-count
-stats (mean/min/max per frame, % of frames with zero detections — a quick
-signal for missed-detection gaps before we design the tracking/counting
-layer on top). This does **not** do cross-frame tracking or deduplicated
-belt counting — that's implemented separately in `../app/tracker.py`; this
-script only validates the detector in isolation.
+Draws per-frame detections on the full video, prints detection-count
+stats (mean/min/max per frame, % of frames with zero detections). Does
+**not** do cross-frame tracking or belt counting — that's
+`../app/tracker.py`; this script validates the detector in isolation.
 
-## 5. Eyeball predictions on frames the model never saw
+## 5. Check predictions on frames the model never saw
 
 ```bash
 uv sync   # picks up jupyter/matplotlib, added for this notebook
 uv run python -m ipykernel install --user --name bag-counting-training --display-name "bag-counting-training"
 ```
 
-Open `notebooks/01_inspect_predictions.ipynb`, kernel `bag-counting-training`.
-Samples frames offset from the labeling `--stride` grid (so none of them were
-in train or val), runs the trained checkpoint on them, and draws the boxes —
-this is the actual check for whether the detector generalizes, versus just
-agreeing with SAM3's own labels (see the mAP caveat in step 3).
+Open `notebooks/01_inspect_predictions.ipynb`, kernel
+`bag-counting-training`. Samples frames offset from the labeling
+`--stride` grid (none were in train or val), runs the trained checkpoint
+on them, draws the boxes. This is the actual generalization check, versus
+just agreeing with SAM3's own labels (see the mAP caveat in step 3).
 
 ## 6. Deploy the checkpoint to the app
 
@@ -163,12 +152,9 @@ agreeing with SAM3's own labels (see the mAP caveat in step 3).
 git push
 ```
 
-Copies the best checkpoint (picked by modification time, not just the
-first glob match) and its config into `../models/`, and commits them if
-anything changed — a no-op if you run it again with nothing new to
-deploy. Doesn't push on its own; review the commit, then push yourself.
-This step is what makes `docker compose up --build` produce real
-detections instead of the stub 0-bags fallback — a repo without this
-step run gives the app no checkpoint to load. See the root `README.md`'s
-"Detection: MMDetection / RTMDet" section for how the running service
-picks these files up.
+Copies the best checkpoint (by modification time) and its config into
+`../models/`, commits if anything changed — a no-op if re-run with
+nothing new. Doesn't push on its own. This is what makes
+`docker compose up --build` produce real detections instead of the stub
+0-bags fallback — see the root `README.md`'s "Detection: MMDetection /
+RTMDet" section for how the running service picks these files up.
