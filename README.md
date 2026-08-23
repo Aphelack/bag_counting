@@ -7,6 +7,8 @@ video — REST API + a small web UI.
 📹 **[Demo recording](<Screencast%20from%202026-08-23%2003-38-53.webm>)**
 — build, run, upload, process, download, in one take.
 
+[Output video]("output_1.mp4)
+
 ## Run
 
 Needs Docker Compose v2, and an NVIDIA GPU + `nvidia-container-toolkit`
